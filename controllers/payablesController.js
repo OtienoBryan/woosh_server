@@ -1,0 +1,259 @@
+const db = require('../database/db');
+
+const payablesController = {
+  // Get aging payables for all suppliers
+  getAgingPayables: async (req, res) => {
+    try {
+      const [rows] = await db.query(`
+        SELECT
+          s.id AS supplier_id,
+          s.company_name,
+          SUM(CASE WHEN DATEDIFF(NOW(), l.date) <= 0 THEN l.credit - l.debit ELSE 0 END) AS current,
+          SUM(CASE WHEN DATEDIFF(NOW(), l.date) BETWEEN 1 AND 30 THEN l.credit - l.debit ELSE 0 END) AS days_1_30,
+          SUM(CASE WHEN DATEDIFF(NOW(), l.date) BETWEEN 31 AND 60 THEN l.credit - l.debit ELSE 0 END) AS days_31_60,
+          SUM(CASE WHEN DATEDIFF(NOW(), l.date) BETWEEN 61 AND 90 THEN l.credit - l.debit ELSE 0 END) AS days_61_90,
+          SUM(CASE WHEN DATEDIFF(NOW(), l.date) > 90 THEN l.credit - l.debit ELSE 0 END) AS days_90_plus,
+          SUM(l.credit - l.debit) AS total_payable
+        FROM suppliers s
+        LEFT JOIN supplier_ledger l ON s.id = l.supplier_id
+        GROUP BY s.id, s.company_name
+        HAVING total_payable > 0
+        ORDER BY s.company_name
+      `);
+      res.json({ success: true, data: rows });
+    } catch (error) {
+      console.error('Error fetching aging payables:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch aging payables' });
+    }
+  },
+
+  // Record a payment to a supplier
+  makeSupplierPayment: async (req, res) => {
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const { supplier_id, amount, payment_date, payment_method, notes, account_id, reference } = req.body;
+
+      // Insert payment record
+      const [paymentResult] = await connection.query(
+        `INSERT INTO payments (payment_number, supplier_id, payment_date, payment_method, amount, notes, created_by, account_id, reference, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'in pay')`,
+        [
+          `PAY-${supplier_id}-${Date.now()}`,
+          supplier_id,
+          payment_date,
+          payment_method,
+          amount,
+          notes || '',
+          1,
+          account_id,
+          reference || ''
+        ]
+      );
+      const paymentId = paymentResult.insertId;
+
+      // Get last running balance for the account
+      const [lastAccountLedger] = await connection.query(
+        'SELECT running_balance FROM account_ledger WHERE account_id = ? ORDER BY date DESC, id DESC LIMIT 1',
+        [account_id]
+      );
+      const prevAccountBalance = lastAccountLedger.length > 0 ? parseFloat(lastAccountLedger[0].running_balance) : 0;
+      const newAccountBalance = prevAccountBalance - amount;
+
+      // Insert into account_ledger (credit, reduces cash/bank)
+      await connection.query(
+        `INSERT INTO account_ledger (account_id, date, description, reference_type, reference_id, debit, credit, running_balance, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'in pay')`,
+        [
+          account_id,
+          payment_date,
+          `Supplier payment`,
+          'payment',
+          paymentId,
+          0,
+          amount,
+          newAccountBalance
+        ]
+      );
+
+      // Create a journal entry: Debit Accounts Payable, Credit Cash/Bank
+      const [apAccount] = await connection.query(
+        `SELECT id FROM chart_of_accounts WHERE account_code = '2000' LIMIT 1`
+      );
+      const [cashAccount] = await connection.query(
+        `SELECT id FROM chart_of_accounts WHERE account_code = '1000' LIMIT 1`
+      );
+      if (apAccount.length && cashAccount.length) {
+        const [journalResult] = await connection.query(
+          `INSERT INTO journal_entries (entry_number, entry_date, reference, description, total_debit, total_credit, status, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, 'posted', ?)`,
+          [
+            `JE-PAY-${supplier_id}-${Date.now()}`,
+            payment_date,
+            `PAY-${paymentId}`,
+            `Supplier payment`,
+            amount,
+            amount,
+            1
+          ]
+        );
+        const journalEntryId = journalResult.insertId;
+        // Debit Accounts Payable
+        await connection.query(
+          `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+           VALUES (?, ?, ?, 0, ?)`,
+          [journalEntryId, apAccount[0].id, amount, `Supplier payment`]
+        );
+        // Credit Cash/Bank
+        await connection.query(
+          `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+           VALUES (?, ?, 0, ?, ?)`,
+          [journalEntryId, cashAccount[0].id, amount, `Supplier payment`]
+        );
+      }
+
+      await connection.commit();
+      res.json({ success: true, message: 'Payment recorded successfully' });
+    } catch (error) {
+      await connection.rollback();
+      console.error('Error making supplier payment:', error);
+      res.status(500).json({ success: false, error: 'Failed to record payment' });
+    } finally {
+      connection.release();
+    }
+  },
+
+  // Confirm a supplier payment (set status to 'confirmed')
+  confirmSupplierPayment: async (req, res) => {
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const { payment_id } = req.body;
+
+      // Get payment details
+      const [paymentResult] = await connection.query(
+        'SELECT * FROM payments WHERE id = ?',
+        [payment_id]
+      );
+      
+      if (paymentResult.length === 0) {
+        throw new Error('Payment not found');
+      }
+      
+      const payment = paymentResult[0];
+
+      // Update payment status
+      await connection.query(
+        `UPDATE payments SET status = 'confirmed' WHERE id = ?`,
+        [payment_id]
+      );
+
+      // Update account_ledger status and recalculate running balance
+      const [accountLedgerEntry] = await connection.query(
+        'SELECT * FROM account_ledger WHERE reference_type = ? AND reference_id = ?',
+        ['payment', payment_id]
+      );
+      
+      if (accountLedgerEntry.length > 0) {
+        const entry = accountLedgerEntry[0];
+        
+        // Get the previous running balance (before this payment entry)
+        const [previousEntry] = await connection.query(
+          'SELECT running_balance FROM account_ledger WHERE account_id = ? AND id < ? ORDER BY id DESC LIMIT 1',
+          [entry.account_id, entry.id]
+        );
+        
+        const prevBalance = previousEntry.length > 0 ? parseFloat(previousEntry[0].running_balance) : 0;
+        const newBalance = prevBalance - payment.amount; // Credit reduces the account balance
+        
+        // Update the account ledger entry with confirmed status and correct running balance
+        await connection.query(
+          `UPDATE account_ledger SET 
+           status = 'confirmed', 
+           running_balance = ? 
+           WHERE reference_type = ? AND reference_id = ?`,
+          [newBalance, 'payment', payment_id]
+        );
+      }
+
+      // Insert debit entry into supplier_ledger to reduce the payable balance
+      const [lastSupplierLedger] = await connection.query(
+        'SELECT running_balance FROM supplier_ledger WHERE supplier_id = ? ORDER BY date DESC, id DESC LIMIT 1',
+        [payment.supplier_id]
+      );
+      const prevSupplierBalance = lastSupplierLedger.length > 0 ? parseFloat(lastSupplierLedger[0].running_balance) : 0;
+      const newSupplierBalance = prevSupplierBalance - payment.amount;
+
+      await connection.query(
+        `INSERT INTO supplier_ledger (supplier_id, date, description, reference_type, reference_id, debit, credit, running_balance)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          payment.supplier_id,
+          payment.payment_date,
+          `Payment ${payment.payment_number}`,
+          'payment',
+          payment_id,
+          payment.amount,
+          0,
+          newSupplierBalance
+        ]
+      );
+
+      await connection.commit();
+      res.json({ success: true, message: 'Payment confirmed.' });
+    } catch (error) {
+      await connection.rollback();
+      console.error('Error confirming payment:', error);
+      res.status(500).json({ success: false, error: 'Failed to confirm payment' });
+    } finally {
+      connection.release();
+    }
+  },
+
+  // Get account ledger for a specific account
+  getAccountLedger: async (req, res) => {
+    try {
+      const { account_id } = req.query;
+      if (!account_id) return res.status(400).json({ success: false, error: 'account_id is required' });
+      const [rows] = await db.query(
+        `SELECT * FROM account_ledger WHERE account_id = ? ORDER BY date DESC, id DESC`,
+        [account_id]
+      );
+      res.json({ success: true, data: rows });
+    } catch (error) {
+      console.error('Error fetching account ledger:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch account ledger' });
+    }
+  },
+
+  // List payments, optionally filtered by status
+  listPayments: async (req, res) => {
+    try {
+      const { status } = req.query;
+      let query = 'SELECT * FROM payments';
+      const params = [];
+      if (status) {
+        query += ' WHERE status = ?';
+        params.push(status);
+      }
+      query += ' ORDER BY payment_date DESC, id DESC';
+      const [rows] = await db.query(query, params);
+      res.json({ success: true, data: rows });
+    } catch (error) {
+      console.error('Error fetching payments:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch payments' });
+    }
+  },
+
+  // List all accounts
+  listAccounts: async (req, res) => {
+    try {
+      const [rows] = await db.query('SELECT * FROM chart_of_accounts WHERE is_active = true ORDER BY account_code');
+      res.json({ success: true, data: rows });
+    } catch (error) {
+      res.status(500).json({ success: false, error: 'Failed to fetch accounts' });
+    }
+  },
+};
+
+module.exports = payablesController; 

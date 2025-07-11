@@ -6,7 +6,7 @@ const db = require('../database/db');
 const staffController = require('../controllers/staffController');
 const roleController = require('../controllers/roleController');
 const multer = require('multer');
-const upload = multer({ dest: 'uploads/' });
+const upload = multer({ storage: multer.memoryStorage() });
 const uploadController = require('../controllers/uploadController');
 const teamController = require('../controllers/teamController');
 const clientController = require('../controllers/clientController');
@@ -20,6 +20,7 @@ const chatRoutes = require('../routes/chatRoutes');
 const http = require('http');
 const { Server } = require('socket.io');
 require('dotenv').config();
+const cloudinary = require('../config/cloudinary');
 
 const app = express();
 
@@ -336,7 +337,30 @@ app.patch('/api/staff/:id/status', staffController.updateStaffStatus);
 app.get('/api/roles', roleController.getAllRoles);
 
 // Upload routes
-app.post('/api/upload', upload.single('photo'), uploadController.uploadImage);
+app.post('/api/upload', upload.single('photo'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+
+    // Upload buffer to Cloudinary
+    const result = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        { resource_type: 'auto' },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      );
+      stream.end(req.file.buffer);
+    });
+
+    res.json({ url: result.secure_url, public_id: result.public_id });
+  } catch (error) {
+    console.error('Cloudinary upload error:', error);
+    res.status(500).json({ message: 'Upload failed', error: error.message });
+  }
+});
 
 // Team routes
 app.post('/api/teams', teamController.createTeam);

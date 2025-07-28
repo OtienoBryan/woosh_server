@@ -1,5 +1,9 @@
 const db = require('../database/db');
 const bcrypt = require('bcryptjs');
+const path = require('path');
+const fs = require('fs');
+const multer = require('multer');
+const cloudinary = require('../config/cloudinary');
 
 // Chart of Accounts Controller
 const chartOfAccountsController = {
@@ -14,37 +18,26 @@ const chartOfAccountsController = {
       }
       query += ' ORDER BY account_code';
       const [rows] = await db.query(query, params);
-      const ACCOUNT_TYPE_MAP = {
-        1: 'asset',
-        2: 'liability',
-        3: 'equity',
-        4: 'fixed_asset',
-        5: 'intangible_asset',
-        6: 'inventory',
-        7: 'receivable',
-        8: 'prepayment',
-        9: 'cash',
-        10: 'payable',
-        11: 'other_liability',
-        12: 'credit_card',
-        13: 'equity',
-        14: 'revenue',
-        15: 'cogs',
-        16: 'expense',
-        17: 'depreciation',
-        18: 'retained_earnings',
-        19: 'other_income'
-        // Add more mappings as needed
-      };
-      // Map numeric account_type to string
-      const mappedRows = rows.map(row => ({
-        ...row,
-        account_type: ACCOUNT_TYPE_MAP[row.account_type] || row.account_type
-      }));
-      res.json({ success: true, data: mappedRows });
+      res.json({ success: true, data: rows });
     } catch (error) {
       console.error('Error fetching accounts:', error);
       res.status(500).json({ success: false, error: 'Failed to fetch accounts' });
+    }
+  },
+
+  // Get accounts by type
+  getAccountsByType: async (req, res) => {
+    try {
+      const { account_type } = req.params;
+      const [rows] = await db.query(`
+        SELECT * FROM chart_of_accounts 
+        WHERE account_type = ? AND is_active = 1 
+        ORDER BY account_code
+      `, [account_type]);
+      res.json({ success: true, data: rows });
+    } catch (error) {
+      console.error('Error fetching accounts by type:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch accounts by type' });
     }
   },
 
@@ -134,9 +127,17 @@ const suppliersController = {
   getAllSuppliers: async (req, res) => {
     try {
       const [rows] = await db.query(`
-        SELECT * FROM suppliers 
-        WHERE is_active = true 
-        ORDER BY company_name
+        SELECT s.*, 
+          (
+            SELECT running_balance 
+            FROM supplier_ledger l 
+            WHERE l.supplier_id = s.id 
+            ORDER BY l.date DESC, l.id DESC 
+            LIMIT 1
+          ) AS balance
+        FROM suppliers s
+        WHERE s.is_active = true
+        ORDER BY s.company_name
       `);
       res.json({ success: true, data: rows });
     } catch (error) {
@@ -464,20 +465,21 @@ const dashboardController = {
       const [salesResult] = await db.query(`
         SELECT COALESCE(SUM(total_amount), 0) as totalSales 
         FROM sales_orders 
-        WHERE status = 'delivered' AND YEAR(order_date) = YEAR(CURDATE())
+        WHERE status IN ('delivered', 'confirmed', 'shipped')
       `);
       
       // Get total purchases (from purchase orders)
       const [purchasesResult] = await db.query(`
         SELECT COALESCE(SUM(total_amount), 0) as totalPurchases 
         FROM purchase_orders 
-        WHERE status = 'received' AND YEAR(order_date) = YEAR(CURDATE())
+        WHERE status IN ('received', 'sent')
+        AND DATE(order_date) = CURDATE()
       `);
       
-      // Get total receivables (outstanding customer payments)
+      // Get total receivables (outstanding client payments)
       const [receivablesResult] = await db.query(`
         SELECT COALESCE(SUM(debit - credit), 0) as totalReceivables
-        FROM customer_ledger
+        FROM client_ledger
       `);
       
       // Get total payables (outstanding supplier payments)
@@ -817,6 +819,51 @@ const getAssetAccounts = async (req, res) => {
   }
 };
 
+// List depreciation accounts from chart_of_accounts
+const getDepreciationAccounts = async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT coa.id, coa.account_code, coa.account_name
+      FROM chart_of_accounts coa
+      WHERE coa.account_type = 17
+      AND coa.is_active = 1
+      ORDER BY coa.account_code
+    `);
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to fetch depreciation accounts' });
+  }
+};
+
+// Get depreciation history
+const getDepreciationHistory = async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT 
+        jel.id,
+        jel.journal_entry_id,
+        a.id as asset_id,
+        a.name as asset_name,
+        jel.debit_amount as amount,
+        je.entry_date as date,
+        jel.description,
+        coa.account_name as depreciation_account_name,
+        je.created_at
+      FROM journal_entry_lines jel
+      JOIN journal_entries je ON jel.journal_entry_id = je.id
+      JOIN chart_of_accounts coa ON jel.account_id = coa.id
+      LEFT JOIN assets a ON je.reference LIKE CONCAT('%asset ', a.id, '%')
+      WHERE coa.account_type = 17
+      AND jel.debit_amount > 0
+      ORDER BY je.entry_date DESC, jel.id DESC
+    `);
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error('Error fetching depreciation history:', err);
+    res.status(500).json({ success: false, error: 'Failed to fetch depreciation history' });
+  }
+};
+
 const addAsset = async (req, res) => {
   try {
     const { account_id, name, purchase_date, purchase_value, description } = req.body;
@@ -844,6 +891,650 @@ const getAssets = async (req, res) => {
   }
 };
 
+// Add bulk equity entries
+const addBulkEquityEntries = async (req, res) => {
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    const { entries } = req.body;
+    
+    if (!entries || !Array.isArray(entries) || entries.length === 0) {
+      return res.status(400).json({ success: false, error: 'No entries provided' });
+    }
+
+    const results = [];
+
+    for (const entry of entries) {
+      const { account_id, amount, description, entry_date, reference } = entry;
+      
+      if (!account_id || !amount || !entry_date) {
+        await connection.rollback();
+        return res.status(400).json({ success: false, error: 'Missing required fields in entry' });
+      }
+
+      // Verify the account exists and is an equity account
+      const [accountRows] = await connection.query(
+        'SELECT * FROM chart_of_accounts WHERE id = ? AND account_type = ? AND is_active = 1',
+        [account_id, 13]
+      );
+      
+      if (accountRows.length === 0) {
+        await connection.rollback();
+        return res.status(400).json({ success: false, error: `Invalid equity account ID: ${account_id}` });
+      }
+
+      // Create journal entry
+      const [journalResult] = await connection.query(
+        `INSERT INTO journal_entries (entry_number, entry_date, reference, description, total_debit, total_credit, status, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, 'posted', 1)`,
+        [
+          `JE-EQ-${account_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          entry_date,
+          reference || '',
+          description || 'Equity entry',
+          amount,
+          amount
+        ]
+      );
+      
+      const journalEntryId = journalResult.insertId;
+
+      // Credit equity account
+      await connection.query(
+        `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+         VALUES (?, ?, 0, ?, ?)`,
+        [journalEntryId, account_id, amount, description || 'Equity entry']
+      );
+
+      results.push({
+        account_id,
+        amount,
+        description,
+        entry_date,
+        journal_entry_id: journalEntryId
+      });
+    }
+
+    await connection.commit();
+    res.json({ 
+      success: true, 
+      message: `${results.length} equity entries posted successfully`,
+      data: results
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error adding bulk equity entries:', error);
+    res.status(500).json({ success: false, error: 'Failed to add equity entries' });
+  } finally {
+    connection.release();
+  }
+};
+
+// Get cash and equivalents accounts
+const getCashAndEquivalents = async (req, res) => {
+  try {
+    const { as_of_date } = req.query;
+    const dateFilter = as_of_date ? 'AND je.entry_date <= ?' : 'AND je.entry_date <= CURDATE()';
+    const params = as_of_date ? [as_of_date] : [];
+
+    // Get all cash and equivalents accounts with balances
+    const [accountsResult] = await db.query(`
+      SELECT 
+        coa.id,
+        coa.account_code,
+        coa.account_name,
+        coa.account_type,
+        coa.description,
+        COALESCE(SUM(
+          CASE 
+            WHEN coa.account_type = 9 THEN jel.debit_amount - jel.credit_amount
+            ELSE jel.credit_amount - jel.debit_amount
+          END
+        ), 0) as balance
+      FROM chart_of_accounts coa
+      LEFT JOIN journal_entry_lines jel ON coa.id = jel.account_id
+      LEFT JOIN journal_entries je ON jel.journal_entry_id = je.id
+      WHERE coa.account_type = 9 AND coa.is_active = true ${dateFilter}
+      GROUP BY coa.id, coa.account_code, coa.account_name, coa.account_type, coa.description
+      ORDER BY coa.account_code
+    `, params);
+
+    // Calculate summary statistics
+    const accounts = accountsResult.map(account => ({
+      ...account,
+      balance: typeof account.balance === 'string' ? parseFloat(account.balance) : Number(account.balance) || 0
+    }));
+
+    const totalBalance = accounts.reduce((sum, account) => sum + account.balance, 0);
+    const positiveAccounts = accounts.filter(account => account.balance > 0).length;
+    const negativeAccounts = accounts.filter(account => account.balance < 0).length;
+    const zeroBalanceAccounts = accounts.filter(account => Math.abs(account.balance) === 0).length;
+
+    const summary = {
+      total_balance: totalBalance,
+      positive_accounts: positiveAccounts,
+      negative_accounts: negativeAccounts,
+      zero_balance_accounts: zeroBalanceAccounts
+    };
+
+    res.json({ 
+      success: true, 
+      data: {
+        accounts,
+        summary
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching cash and equivalents:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch cash and equivalents' });
+  }
+};
+
+// Set opening balance for cash and equivalents accounts
+const setOpeningBalance = async (req, res) => {
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    const { account_id, amount, opening_date, description } = req.body;
+    
+    if (!account_id || amount === undefined || amount === null || !opening_date) {
+      return res.status(400).json({ success: false, error: 'Missing required fields: account_id, amount, opening_date' });
+    }
+
+    // Verify the account exists and is a cash/equivalents account
+    const [accountRows] = await connection.query(
+      'SELECT * FROM chart_of_accounts WHERE id = ? AND account_type = 9 AND is_active = 1',
+      [account_id]
+    );
+    
+    if (accountRows.length === 0) {
+      await connection.rollback();
+      return res.status(400).json({ success: false, error: 'Invalid cash/equivalents account ID' });
+    }
+
+    const account = accountRows[0];
+
+    // Check if opening balance already exists for this account and date
+    const [existingBalance] = await connection.query(
+      `SELECT jel.* FROM journal_entry_lines jel
+       JOIN journal_entries je ON jel.journal_entry_id = je.id
+       WHERE jel.account_id = ? AND je.entry_date = ? AND je.reference LIKE '%Opening Balance%'`,
+      [account_id, opening_date]
+    );
+
+    if (existingBalance.length > 0) {
+      await connection.rollback();
+      return res.status(400).json({ success: false, error: 'Opening balance already exists for this account and date' });
+    }
+
+    // Create journal entry for opening balance
+    const [journalResult] = await connection.query(
+      `INSERT INTO journal_entries (entry_number, entry_date, reference, description, total_debit, total_credit, status, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, 'posted', 1)`,
+      [
+        `JE-OB-${account_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        opening_date,
+        'Opening Balance',
+        description || `Opening balance for ${account.account_name}`,
+        Math.abs(amount),
+        Math.abs(amount)
+      ]
+    );
+    
+    const journalEntryId = journalResult.insertId;
+
+    // Create journal entry line - debit cash account if positive, credit if negative
+    if (amount > 0) {
+      // Debit cash account
+      await connection.query(
+        `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+         VALUES (?, ?, ?, 0, ?)`,
+        [journalEntryId, account_id, amount, description || 'Opening balance']
+      );
+
+      // Credit opening balance equity account (or contra account)
+      await connection.query(
+        `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+         VALUES (?, ?, 0, ?, ?)`,
+        [journalEntryId, 1, amount, description || 'Opening balance'] // Using account ID 1 as contra account
+      );
+    } else {
+      // Credit cash account
+      await connection.query(
+        `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+         VALUES (?, ?, 0, ?, ?)`,
+        [journalEntryId, account_id, Math.abs(amount), description || 'Opening balance']
+      );
+
+      // Debit opening balance equity account (or contra account)
+      await connection.query(
+        `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+         VALUES (?, ?, ?, 0, ?)`,
+        [journalEntryId, 1, Math.abs(amount), description || 'Opening balance'] // Using account ID 1 as contra account
+      );
+    }
+
+    await connection.commit();
+    res.json({ 
+      success: true, 
+      message: 'Opening balance set successfully',
+      data: {
+        account_id,
+        amount,
+        opening_date,
+        journal_entry_id: journalEntryId
+      }
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error setting opening balance:', error);
+    res.status(500).json({ success: false, error: 'Failed to set opening balance' });
+  } finally {
+    connection.release();
+  }
+};
+
+// Get all cash and equivalents accounts from chart of accounts
+const getAllCashAccounts = async (req, res) => {
+  try {
+    const [accounts] = await db.query(`
+      SELECT 
+        id,
+        account_code,
+        account_name,
+        account_type,
+        description,
+        is_active,
+        created_at,
+        updated_at
+      FROM chart_of_accounts 
+      WHERE account_type = 9 
+      ORDER BY account_code
+    `);
+
+    res.json({ 
+      success: true, 
+      data: accounts
+    });
+  } catch (error) {
+    console.error('Error fetching cash accounts:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch cash accounts' });
+  }
+};
+
+// Get detailed ledger entries for a specific cash account
+const getCashAccountLedger = async (req, res) => {
+  try {
+    const { account_id } = req.params;
+    const { start_date, end_date } = req.query;
+    
+    if (!account_id) {
+      return res.status(400).json({ success: false, error: 'account_id is required' });
+    }
+
+    // Verify the account exists and is a cash account
+    const [accountRows] = await db.query(
+      'SELECT * FROM chart_of_accounts WHERE id = ? AND account_type = 9 AND is_active = 1',
+      [account_id]
+    );
+    
+    if (accountRows.length === 0) {
+      return res.status(400).json({ success: false, error: 'Invalid cash account ID' });
+    }
+
+    // Build date filter conditions
+    let dateFilter = '';
+    const params = [account_id];
+    
+    if (start_date && end_date) {
+      dateFilter = 'AND je.entry_date BETWEEN ? AND ?';
+      params.push(start_date, end_date);
+    } else if (start_date) {
+      dateFilter = 'AND je.entry_date >= ?';
+      params.push(start_date);
+    } else if (end_date) {
+      dateFilter = 'AND je.entry_date <= ?';
+      params.push(end_date);
+    }
+
+    // Get all journal entry lines for this account with running balance calculation
+    const [rows] = await db.query(`
+      SELECT 
+        jel.id,
+        jel.journal_entry_id,
+        je.entry_date,
+        je.entry_number,
+        je.reference,
+        jel.description,
+        jel.debit_amount,
+        jel.credit_amount,
+        @running_balance := @running_balance + (jel.debit_amount - jel.credit_amount) as running_balance,
+        je.created_at
+      FROM journal_entry_lines jel
+      JOIN journal_entries je ON jel.journal_entry_id = je.id
+      CROSS JOIN (SELECT @running_balance := 0) as vars
+      WHERE jel.account_id = ? ${dateFilter}
+      ORDER BY je.entry_date ASC, jel.id ASC
+    `, params);
+
+    // Format the data for frontend
+    const entries = rows.map(row => ({
+      id: row.id,
+      journal_entry_id: row.journal_entry_id,
+      entry_date: row.entry_date,
+      reference: row.reference,
+      description: row.description,
+      debit_amount: parseFloat(row.debit_amount) || 0,
+      credit_amount: parseFloat(row.credit_amount) || 0,
+      running_balance: parseFloat(row.running_balance) || 0,
+      entry_number: row.entry_number,
+      created_at: row.created_at
+    }));
+
+    res.json({ 
+      success: true, 
+      data: entries
+    });
+  } catch (error) {
+    console.error('Error fetching cash account ledger:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch account ledger' });
+  }
+};
+
+// Get all categories
+const getAllCategories = async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT id, name FROM Category ORDER BY name');
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to fetch categories' });
+  }
+};
+
+// Add a new category
+const addCategory = async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ success: false, error: 'Name is required' });
+    const [result] = await db.query('INSERT INTO Category (name) VALUES (?)', [name]);
+    res.status(201).json({ success: true, data: { id: result.insertId, name } });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to add category' });
+  }
+};
+
+// Update a category
+const updateCategory = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ success: false, error: 'Name is required' });
+    await db.query('UPDATE Category SET name = ? WHERE id = ?', [name, id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to update category' });
+  }
+};
+
+// Delete a category
+const deleteCategory = async (req, res) => {
+  try {
+    const { id } = req.params;
+    await db.query('DELETE FROM Category WHERE id = ?', [id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to delete category' });
+  }
+};
+
+// Get all price options for a category
+const getCategoryPriceOptions = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [rows] = await db.query('SELECT * FROM CategoryPriceOption WHERE category_id = ? ORDER BY label', [id]);
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to fetch price options' });
+  }
+};
+
+// Add a price option to a category
+const addCategoryPriceOption = async (req, res) => {
+  try {
+    const { id } = req.params; // category_id
+    const { label, value } = req.body;
+    if (!label || value === undefined) return res.status(400).json({ success: false, error: 'Label and value are required' });
+    const [result] = await db.query('INSERT INTO CategoryPriceOption (category_id, label, value) VALUES (?, ?, ?)', [id, label, value]);
+    res.status(201).json({ success: true, data: { id: result.insertId, category_id: id, label, value } });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to add price option' });
+  }
+};
+
+// Update a price option
+const updateCategoryPriceOption = async (req, res) => {
+  try {
+    const { id } = req.params; // price option id
+    const { label, value } = req.body;
+    if (!label || value === undefined) return res.status(400).json({ success: false, error: 'Label and value are required' });
+    await db.query('UPDATE CategoryPriceOption SET label = ?, value = ? WHERE id = ?', [label, value, id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to update price option' });
+  }
+};
+
+// Delete a price option
+const deleteCategoryPriceOption = async (req, res) => {
+  try {
+    const { id } = req.params; // price option id
+    await db.query('DELETE FROM CategoryPriceOption WHERE id = ?', [id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to delete price option' });
+  }
+};
+
+// Multer setup for product images
+const productImageStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const dir = path.join(__dirname, '../../uploads/products');
+    fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: function (req, file, cb) {
+    const ext = path.extname(file.originalname);
+    cb(null, `product_${req.params.id}_${Date.now()}${ext}`);
+  }
+});
+const uploadProductImageMulter = multer({ storage: productImageStorage });
+
+// Upload product image controller (Cloudinary)
+const uploadProductImage = async (req, res) => {
+  if (!req.file) return res.status(400).json({ success: false, error: 'No file uploaded' });
+  const productId = req.params.id;
+  try {
+    // Upload to Cloudinary
+    const result = await cloudinary.uploader.upload(req.file.path, {
+      folder: 'products',
+      public_id: `product_${productId}_${Date.now()}`,
+      resource_type: 'image',
+    });
+    const imageUrl = result.secure_url;
+    await db.query('UPDATE products SET image_url = ? WHERE id = ?', [imageUrl, productId]);
+    require('fs').unlink(req.file.path, () => {});
+    res.json({ success: true, url: imageUrl });
+  } catch (error) {
+    console.error('Cloudinary upload error:', error);
+    res.status(500).json({ success: false, error: 'Failed to upload image' });
+  }
+};
+
+// Create product with optional image upload
+const createProduct = async (req, res) => {
+  try {
+    const { product_name, product_code, category_id, cost_price } = req.body;
+    if (!product_name || !product_code || !category_id || !cost_price) {
+      return res.status(400).json({ success: false, error: 'Missing required fields' });
+    }
+    let imageUrl = null;
+    if (req.file) {
+      // Upload to Cloudinary
+      const result = await cloudinary.uploader.upload(req.file.path, {
+        folder: 'products',
+        public_id: `product_${product_code}_${Date.now()}`,
+        resource_type: 'image',
+      });
+      imageUrl = result.secure_url;
+      require('fs').unlink(req.file.path, () => {});
+    }
+    // Get category name for denormalized field
+    let categoryName = '';
+    const [catRows] = await db.query('SELECT name FROM Category WHERE id = ?', [category_id]);
+    if (catRows.length > 0) categoryName = catRows[0].name;
+    const [result] = await db.query(
+      `INSERT INTO products (product_code, product_name, category, category_id, cost_price, image_url)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [product_code, product_name, categoryName, category_id, cost_price, imageUrl]
+    );
+    const [rows] = await db.query('SELECT * FROM products WHERE id = ?', [result.insertId]);
+    res.status(201).json({ success: true, data: rows[0] });
+  } catch (error) {
+    console.error('Error creating product:', error);
+    res.status(500).json({ success: false, error: 'Failed to create product' });
+  }
+};
+
+// Get all sales reps
+const getSalesReps = async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT id, name, email, phoneNumber FROM SalesRep ORDER BY name');
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to fetch sales reps' });
+  }
+};
+
+// Get all assets
+const getAllAssets = async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT * FROM assets ORDER BY purchase_date DESC, id DESC');
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    console.error('Error fetching assets:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch assets' });
+  }
+};
+
+// Get all assets with depreciation and current value
+const getAllAssetsWithDepreciation = async (req, res) => {
+  try {
+    // Get all assets with their account info
+    const [assets] = await db.query(`
+      SELECT a.*, coa.account_name AS category
+      FROM assets a
+      LEFT JOIN chart_of_accounts coa ON a.account_id = coa.id
+      ORDER BY a.purchase_date DESC, a.id DESC
+    `);
+    if (!assets.length) return res.json({ success: true, data: [] });
+
+    // Get total depreciation per asset
+    const [depreciationRows] = await db.query(`
+      SELECT 
+        a.id as asset_id,
+        COALESCE(SUM(jel.debit_amount), 0) as total_depreciation
+      FROM assets a
+      LEFT JOIN journal_entries je ON je.reference LIKE CONCAT('%asset ', a.id, '%')
+      LEFT JOIN journal_entry_lines jel ON jel.journal_entry_id = je.id
+      LEFT JOIN chart_of_accounts coa ON jel.account_id = coa.id
+      WHERE coa.account_type = 17 AND jel.debit_amount > 0
+      GROUP BY a.id
+    `);
+    const depreciationMap = {};
+    for (const row of depreciationRows) {
+      depreciationMap[row.asset_id] = parseFloat(row.total_depreciation || 0);
+    }
+
+    // Attach depreciation and current value to each asset
+    const result = assets.map(asset => {
+      const total_depreciation = depreciationMap[asset.id] || 0;
+      const current_value = parseFloat(asset.purchase_value) - total_depreciation;
+      return { ...asset, total_depreciation, current_value };
+    });
+    res.json({ success: true, data: result });
+  } catch (error) {
+    console.error('Error fetching assets with depreciation:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch assets with depreciation' });
+  }
+};
+
+// Get total current value of all assets
+const getAssetsTotalValue = async (req, res) => {
+  try {
+    // Get all assets
+    const [assets] = await db.query('SELECT * FROM assets');
+    if (!assets.length) return res.json({ success: true, total_value: 0 });
+
+    // Get total depreciation per asset
+    const [depreciationRows] = await db.query(`
+      SELECT 
+        a.id as asset_id,
+        COALESCE(SUM(jel.debit_amount), 0) as total_depreciation
+      FROM assets a
+      LEFT JOIN journal_entries je ON je.reference LIKE CONCAT('%asset ', a.id, '%')
+      LEFT JOIN journal_entry_lines jel ON jel.journal_entry_id = je.id
+      LEFT JOIN chart_of_accounts coa ON jel.account_id = coa.id
+      WHERE coa.account_type = 17 AND jel.debit_amount > 0
+      GROUP BY a.id
+    `);
+    const depreciationMap = {};
+    for (const row of depreciationRows) {
+      depreciationMap[row.asset_id] = parseFloat(row.total_depreciation || 0);
+    }
+
+    // Sum current value for all assets
+    let total_value = 0;
+    for (const asset of assets) {
+      const total_depreciation = depreciationMap[asset.id] || 0;
+      const current_value = parseFloat(asset.purchase_value) - total_depreciation;
+      total_value += current_value;
+    }
+    res.json({ success: true, total_value });
+  } catch (error) {
+    console.error('Error fetching total asset value:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch total asset value' });
+  }
+};
+
+// Get all expenses (journal_entry_lines joined with chart_of_accounts where account_type = 16)
+const getAllExpenses = async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+    let sql = `
+      SELECT jel.*, coa.account_name, coa.account_code, je.entry_date
+      FROM journal_entry_lines jel
+      JOIN chart_of_accounts coa ON jel.account_id = coa.id
+      JOIN journal_entries je ON jel.journal_entry_id = je.id
+      WHERE coa.account_type = 16
+    `;
+    const params = [];
+    if (start_date) {
+      sql += ' AND je.entry_date >= ?';
+      params.push(start_date);
+    }
+    if (end_date) {
+      sql += ' AND je.entry_date <= ?';
+      params.push(end_date);
+    }
+    sql += ' ORDER BY jel.id DESC';
+    const [rows] = await db.query(sql, params);
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    console.error('Error fetching expenses:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch expenses' });
+  }
+};
+
 module.exports = {
   chartOfAccountsController,
   suppliersController,
@@ -854,8 +1545,31 @@ module.exports = {
   postDepreciation,
   addEquityEntry,
   listEquityEntries,
+  addBulkEquityEntries,
   getAssetTypes,
   getAssetAccounts,
+  getDepreciationAccounts,
+  getDepreciationHistory,
   addAsset,
   getAssets,
+  getAllAssets,
+  getAllAssetsWithDepreciation,
+  getCashAndEquivalents,
+  setOpeningBalance,
+  getAllCashAccounts,
+  getCashAccountLedger,
+  getAllCategories,
+  addCategory,
+  updateCategory,
+  deleteCategory,
+  getCategoryPriceOptions,
+  addCategoryPriceOption,
+  updateCategoryPriceOption,
+  deleteCategoryPriceOption,
+  uploadProductImage,
+  uploadProductImageMulter,
+  createProduct,
+  getSalesReps,
+  getAssetsTotalValue,
+  getAllExpenses,
 }; 

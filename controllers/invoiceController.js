@@ -11,10 +11,20 @@ const invoiceController = {
       // Generate invoice number
       const invoiceNumber = `INV-${customer_id}-${Date.now()}`;
 
-      // Calculate totals
-      const subtotal = items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
-      const tax_amount = subtotal * 0.1; // 10% tax
-      const total_amount = subtotal + tax_amount;
+      // Calculate totals (tax-inclusive)
+      const TAX_RATE = 0.16;
+      const TAX_DIVISOR = 1 + TAX_RATE;
+      let subtotal = 0;
+      let tax_amount = 0;
+      let total_amount = 0;
+      for (const item of items) {
+        const itemTotal = item.quantity * item.unit_price;
+        const itemNet = itemTotal / TAX_DIVISOR;
+        const itemTax = itemTotal - itemNet;
+        subtotal += itemNet;
+        tax_amount += itemTax;
+        total_amount += itemTotal;
+      }
 
       // Insert invoice
       const [invoiceResult] = await connection.query(
@@ -36,15 +46,20 @@ const invoiceController = {
 
       // Insert invoice items
       for (const item of items) {
+        const itemTotal = item.quantity * item.unit_price;
+        const itemNet = itemTotal / TAX_DIVISOR;
+        const itemTax = itemTotal - itemNet;
         await connection.query(
-          `INSERT INTO sales_order_items (sales_order_id, product_id, quantity, unit_price, total_price)
-           VALUES (?, ?, ?, ?, ?)`,
+          `INSERT INTO sales_order_items (sales_order_id, product_id, quantity, unit_price, total_price, net_price, tax_amount)` +
+          ` VALUES (?, ?, ?, ?, ?, ?, ?)`,
           [
             invoiceId,
             item.product_id,
             item.quantity,
             item.unit_price,
-            item.quantity * item.unit_price
+            itemTotal,
+            itemNet,
+            itemTax
           ]
         );
       }
@@ -77,8 +92,17 @@ const invoiceController = {
         `SELECT id FROM chart_of_accounts WHERE account_code = '400001' LIMIT 1`
       );
       const [accountsReceivableAccount] = await connection.query(
-        `SELECT id FROM chart_of_accounts WHERE account_code = '110000' LIMIT 1`
+        `SELECT id FROM chart_of_accounts WHERE account_code = '1100' LIMIT 1`
       );
+      
+      // If accounts receivable not found by code, try to find by account_type = 2
+      let arAccount = accountsReceivableAccount;
+      if (!arAccount.length) {
+        [arAccount] = await connection.query(
+          `SELECT id FROM chart_of_accounts WHERE account_type = 2 LIMIT 1`
+        );
+      }
+      
       const [costOfGoodsAccount] = await connection.query(
         `SELECT id FROM chart_of_accounts WHERE account_code = '500000' LIMIT 1`
       );
@@ -90,12 +114,13 @@ const invoiceController = {
       );
 
       if (!salesRevenueAccount.length) console.error('Sales Revenue account not found!');
-      if (!accountsReceivableAccount.length) console.error('Accounts Receivable account not found!');
+      if (!arAccount.length) console.error('Accounts Receivable account not found!');
       if (!costOfGoodsAccount.length) console.error('COGS account not found!');
       if (!inventoryAccount.length) console.error('Inventory account not found!');
       if (!salesTaxAccount.length) console.warn('Sales Tax account not found!');
 
-      if (salesRevenueAccount.length && accountsReceivableAccount.length) {
+      // Journal entries: use subtotal (net) and tax_amount
+      if (salesRevenueAccount.length && arAccount.length) {
         // Journal Entry 1: Sales Revenue and Accounts Receivable
         const [journalResult1] = await connection.query(
           `INSERT INTO journal_entries (entry_number, entry_date, reference, description, total_debit, total_credit, status, created_by)
@@ -116,10 +141,10 @@ const invoiceController = {
         await connection.query(
           `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
            VALUES (?, ?, ?, 0, ?)`,
-          [journalEntryId1, accountsReceivableAccount[0].id, total_amount, `Invoice ${invoiceNumber}`]
+          [journalEntryId1, arAccount[0].id, total_amount, `Invoice ${invoiceNumber}`]
         );
 
-        // Credit Sales Revenue
+        // Credit Sales Revenue (net)
         await connection.query(
           `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
            VALUES (?, ?, 0, ?, ?)`,
@@ -194,7 +219,7 @@ const invoiceController = {
       await connection.query(
         `UPDATE chart_of_accounts SET 
           description = CONCAT(description, ' | Last invoice: ', ?)
-         WHERE account_code = '110000'`,
+         WHERE account_code = '1100'`,
         [invoiceNumber]
       );
 
@@ -219,10 +244,10 @@ const invoiceController = {
       const [rows] = await db.query(`
         SELECT 
           so.*,
-          c.company_name as customer_name,
+          c.name as customer_name,
           c.email as customer_email
         FROM sales_orders so
-        LEFT JOIN customers c ON so.customer_id = c.id
+        LEFT JOIN Clients c ON so.client_id = c.id
         ORDER BY so.order_date DESC, so.id DESC
       `);
       res.json({ success: true, data: rows });
@@ -241,12 +266,12 @@ const invoiceController = {
       const [invoiceRows] = await db.query(`
         SELECT 
           so.*,
-          c.company_name as customer_name,
+          c.name as customer_name,
           c.email as customer_email,
           c.phone as customer_phone,
           c.address as customer_address
         FROM sales_orders so
-        LEFT JOIN customers c ON so.customer_id = c.id
+        LEFT JOIN Clients c ON so.client_id = c.id
         WHERE so.id = ?
       `, [id]);
 

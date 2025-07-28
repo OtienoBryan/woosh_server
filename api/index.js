@@ -13,7 +13,10 @@ const clientController = require('../controllers/clientController');
 const branchController = require('../controllers/branchController');
 const serviceChargeController = require('../controllers/serviceChargeController');
 const journeyPlanController = require('../controllers/journeyPlanController');
-const sosController = require('../controllers/sosController');
+const leaveRequestRoutes = require('../routes/leaveRequestRoutes');
+const visibilityReportRoutes = require('../routes/visibilityReportRoutes');
+const riderRoutes = require('../routes/riderRoutes');
+
 const financialRoutes = require('../routes/financialRoutes');
 const staffRoutes = require('../routes/staffRoutes');
 const chatRoutes = require('../routes/chatRoutes');
@@ -21,6 +24,8 @@ const http = require('http');
 const { Server } = require('socket.io');
 require('dotenv').config();
 const cloudinary = require('../config/cloudinary');
+const visibilityReportController = require('../controllers/visibilityReportController');
+const myVisibilityReportRoutes = require('../routes/myVisibilityReportRoutes');
 
 const app = express();
 
@@ -35,6 +40,9 @@ const corsOptions = {
 // Middleware
 app.use(cors(corsOptions));
 app.use(express.json());
+
+// Register all specific endpoints FIRST
+app.use('/api/my-visibility-reports', myVisibilityReportRoutes);
 
 // Helper function to map database fields to frontend fields
 const mapRequestFields = (request) => {
@@ -62,55 +70,60 @@ app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
 
     if (!username || !password) {
-      console.log('Missing username or password');
-      return res.status(400).json({ message: 'Username and password are required' });
+      console.log('Missing name or password');
+      return res.status(400).json({ message: 'Name and password are required' });
     }
 
-    // Get user from database
-    console.log('Querying database for user:', username);
-    const [users] = await db.query(
-      'SELECT * FROM users WHERE username = ?',
+    // Get staff from database by name
+    console.log('Querying database for staff by name:', username);
+    const [staff] = await db.query(
+      'SELECT * FROM staff WHERE name = ?',
       [username]
     );
 
-    console.log('Database query result:', users);
+    console.log('Database query result:', staff);
 
-    if (users.length === 0) {
-      console.log('No user found with username:', username);
+    if (staff.length === 0) {
+      console.log('No staff found with name:', username);
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    const user = users[0];
+    const user = staff[0];
+
+    if (!user.password) {
+      console.log('No password set for this staff member:', username);
+      return res.status(401).json({ message: 'No password set for this staff member' });
+    }
 
     // Compare password
     console.log('Comparing passwords...');
-    const isValidPassword = await bcrypt.compare(password, user.password_hash);
+    const isValidPassword = await bcrypt.compare(password, user.password);
     console.log('Password comparison result:', isValidPassword);
 
     if (!isValidPassword) {
-      console.log('Invalid password for user:', username);
+      console.log('Invalid password for staff:', username);
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
     // Create JWT token
-    console.log('Creating JWT token for user:', username);
+    console.log('Creating JWT token for staff:', username);
     const token = jwt.sign(
-      { 
+      {
         userId: user.id,
-        username: user.username,
-        role: user.role 
+        name: user.name,
+        role: user.role
       },
       process.env.JWT_SECRET || 'your-secret-key',
       { expiresIn: '24h' }
     );
 
-    console.log('Login successful for user:', username);
+    console.log('Login successful for staff:', username);
     res.json({
       token,
       user: {
         id: user.id,
-        username: user.username,
-        email: user.email,
+        name: user.name,
+        email: user.business_email,
         role: user.role
       }
     });
@@ -232,15 +245,15 @@ app.post('/api/requests', async (req, res) => {
       return res.status(400).json({ message: 'Invalid service type' });
     }
 
-    // Check if user exists
-    const [users] = await db.query(
-      'SELECT id FROM users WHERE id = ?',
+    // Check if staff exists
+    const [staff] = await db.query(
+      'SELECT id FROM staff WHERE id = ?',
       [userId]
     );
 
-    if (users.length === 0) {
-      console.error('User not found:', userId);
-      return res.status(400).json({ message: 'Invalid user' });
+    if (staff.length === 0) {
+      console.error('Staff not found:', userId);
+      return res.status(400).json({ message: 'Invalid staff member' });
     }
 
     // Insert request into database
@@ -336,6 +349,9 @@ app.patch('/api/staff/:id/status', staffController.updateStaffStatus);
 // Roles routes
 app.get('/api/roles', roleController.getAllRoles);
 
+app.use('/api/visibility-reports', visibilityReportRoutes); // <-- moved up
+
+
 // Upload routes
 app.post('/api/upload', upload.single('photo'), async (req, res) => {
   try {
@@ -362,65 +378,12 @@ app.post('/api/upload', upload.single('photo'), async (req, res) => {
   }
 });
 
-// Team routes
-app.post('/api/teams', teamController.createTeam);
-app.get('/api/teams', teamController.getTeams);
-
-// Client routes
-app.get('/api/clients', clientController.getAllClients);
-app.get('/api/clients/:id', clientController.getClient);
-app.post('/api/clients', clientController.createClient);
-app.put('/api/clients/:id', clientController.updateClient);
-app.delete('/api/clients/:id', clientController.deleteClient);
-app.get('/api/clients/:clientId/branches', branchController.getAllBranches);
-app.post('/api/clients/:clientId/branches', branchController.createBranch);
-app.put('/api/clients/:clientId/branches/:branchId', branchController.updateBranch);
-app.delete('/api/clients/:clientId/branches/:branchId', branchController.deleteBranch);
-app.get('/api/clients/:clientId/service-charges', serviceChargeController.getServiceCharges);
-app.post('/api/clients/:clientId/service-charges', serviceChargeController.createServiceCharge);
-app.put('/api/clients/:clientId/service-charges/:chargeId', serviceChargeController.updateServiceCharge);
-app.delete('/api/clients/:clientId/service-charges/:chargeId', serviceChargeController.deleteServiceCharge);
-
-// Journey Plan routes
-app.get('/api/journey-plans', journeyPlanController.getJourneyPlans);
-app.get('/api/journey-plans/:id', journeyPlanController.getJourneyPlan);
-app.post('/api/journey-plans', journeyPlanController.createJourneyPlan);
-app.patch('/api/journey-plans/:id', journeyPlanController.updateJourneyPlan);
-app.delete('/api/journey-plans/:id', journeyPlanController.deleteJourneyPlan);
-
-// SOS routes
-app.get('/api/sos', async (req, res) => {
-  try {
-    console.log('SOS route hit');
-    const [sosList] = await db.query('SELECT * FROM sos');
-    console.log('SOS data:', sosList);
-    res.json(sosList);
-  } catch (error) {
-    console.error('Error in SOS route:', error);
-    res.status(500).json({ message: 'Failed to fetch SOS data' });
-  }
-});
-
-app.get('/api/sos/:id', sosController.getSos);
-app.post('/api/sos', sosController.createSos);
-app.patch('/api/sos/:id', sosController.updateSos);
-app.delete('/api/sos/:id', sosController.deleteSos);
-
 // Financial System Routes
 app.use('/api/financial', financialRoutes);
 app.use('/api', staffRoutes);
 app.use('/api/chat', chatRoutes);
-
-// Example API endpoint
-app.get('/api/test', (req, res) => {
-  db.query('SELECT 1 + 1 AS solution')
-    .then(([results]) => {
-      res.json({ message: 'Database connection successful', results });
-    })
-    .catch(err => {
-      res.status(500).json({ error: err.message });
-    });
-});
+app.use('/api/leave-requests', leaveRequestRoutes);
+app.use('/api/riders', riderRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -470,6 +433,44 @@ io.on('connection', (socket) => {
     }
   });
 });
+
+// Register all specific endpoints FIRST
+app.get('/api/countries', async (req, res) => {
+  try {
+    const [countries] = await db.query('SELECT id, name FROM Country ORDER BY name');
+    res.json({ success: true, data: countries });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
+// Team routes
+app.post('/api/teams', teamController.createTeam);
+app.get('/api/teams', teamController.getTeams);
+
+// Client routes
+app.get('/api/clients', clientController.getAllClients);
+app.get('/api/clients/:id', clientController.getClient);
+app.post('/api/clients', clientController.createClient);
+app.put('/api/clients/:id', clientController.updateClient);
+app.delete('/api/clients/:id', clientController.deleteClient);
+app.get('/api/clients/:clientId/branches', branchController.getAllBranches);
+app.post('/api/clients/:clientId/branches', branchController.createBranch);
+app.put('/api/clients/:clientId/branches/:branchId', branchController.updateBranch);
+app.delete('/api/clients/:clientId/branches/:branchId', branchController.deleteBranch);
+app.get('/api/clients/:clientId/service-charges', serviceChargeController.getServiceCharges);
+app.post('/api/clients/:clientId/service-charges', serviceChargeController.createServiceCharge);
+app.put('/api/clients/:clientId/service-charges/:chargeId', serviceChargeController.updateServiceCharge);
+app.delete('/api/clients/:clientId/service-charges/:chargeId', serviceChargeController.deleteServiceCharge);
+
+// Journey Plan routes
+app.get('/api/journey-plans', journeyPlanController.getJourneyPlans);
+app.get('/api/journey-plans/:id', journeyPlanController.getJourneyPlan);
+app.post('/api/journey-plans', journeyPlanController.createJourneyPlan);
+app.patch('/api/journey-plans/:id', journeyPlanController.updateJourneyPlan);
+app.delete('/api/journey-plans/:id', journeyPlanController.deleteJourneyPlan);
+
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {

@@ -10,7 +10,32 @@ const {
   addAsset,
   getAssets,
   getAssetAccounts,
-  postDepreciation
+  getDepreciationAccounts,
+  getDepreciationHistory,
+  postDepreciation,
+  getCashAndEquivalents,
+  postExpense,
+  addEquityEntry,
+  listEquityEntries,
+  addBulkEquityEntries,
+  setOpeningBalance,
+  getAllCashAccounts,
+  getCashAccountLedger,
+  getAllCategories,
+  addCategory,
+  updateCategory,
+  deleteCategory,
+  getCategoryPriceOptions,
+  addCategoryPriceOption,
+  updateCategoryPriceOption,
+  deleteCategoryPriceOption,
+  uploadProductImage,
+  uploadProductImageMulter,
+  createProduct,
+  getSalesReps,
+  getAllAssetsWithDepreciation,
+  getAssetsTotalValue,
+  getAllExpenses
 } = require('../controllers/financialController');
 const purchaseOrderController = require('../controllers/purchaseOrderController');
 const storeController = require('../controllers/storeController');
@@ -22,6 +47,7 @@ const salesOrderController = require('../controllers/salesOrderController');
 
 // Chart of Accounts Routes
 router.get('/accounts', chartOfAccountsController.getAllAccounts);
+router.get('/accounts/type/:account_type', chartOfAccountsController.getAccountsByType);
 router.get('/accounts/:id', chartOfAccountsController.getAccountById);
 router.post('/accounts', chartOfAccountsController.createAccount);
 router.put('/accounts/:id', chartOfAccountsController.updateAccount);
@@ -45,9 +71,10 @@ router.delete('/customers/:id', customersController.deleteCustomer);
 // Products Routes
 router.get('/products', productsController.getAllProducts);
 router.get('/products/:id', productsController.getProductById);
-router.post('/products', productsController.createProduct);
+router.post('/products', uploadProductImageMulter.single('image'), createProduct);
 router.put('/products/:id', productsController.updateProduct);
 router.delete('/products/:id', productsController.deleteProduct);
+router.post('/products/:id/image', uploadProductImageMulter.single('image'), uploadProductImage);
 router.get('/products/low-stock', productsController.getLowStockProducts);
 
 // Dashboard Routes
@@ -69,6 +96,11 @@ router.get('/sales-orders/:id', salesOrderController.getSalesOrderById);
 router.post('/sales-orders', salesOrderController.createSalesOrder);
 router.put('/sales-orders/:id', salesOrderController.updateSalesOrder);
 router.delete('/sales-orders/:id', salesOrderController.deleteSalesOrder);
+router.get('/sales-orders/:id/items', salesOrderController.getSalesOrderItems);
+// Add PATCH route for assigning rider
+router.patch('/sales-orders/:id', salesOrderController.assignRider);
+// Add POST route for receiving items back to stock
+router.post('/sales-orders/:id/receive-back', salesOrderController.receiveBackToStock);
 
 // Stores Routes
 router.get('/stores', storeController.getAllStores);
@@ -94,24 +126,69 @@ router.get('/receivables/aging', receivablesController.getAgingReceivables);
 router.post('/receivables/payment', receivablesController.makeCustomerPayment);
 router.post('/receivables/confirm-payment', receivablesController.confirmCustomerPayment);
 router.get('/receipts', receivablesController.listReceipts);
+router.get('/receipts/invoice/:invoice_id/pending', receivablesController.getPendingReceiptsForInvoice);
 
 // Reports Routes
 router.get('/reports/profit-loss', reportsController.getProfitLossReport);
 router.get('/reports/balance-sheet', reportsController.getBalanceSheetReport);
 router.get('/reports/cash-flow', reportsController.getCashFlowReport);
+router.get('/reports/product-performance', reportsController.getProductPerformanceReport);
 router.get('/journal-entry-lines/:account_id', reportsController.getJournalEntriesForAccount);
+router.get('/journal-entries/invoice/:invoice_id', reportsController.getJournalEntriesForInvoice);
+
+// Cash and Equivalents Route
+router.get('/cash-equivalents', getCashAndEquivalents);
+router.get('/cash-equivalents/accounts', getAllCashAccounts);
+router.post('/cash-equivalents/opening-balance', setOpeningBalance);
+router.get('/cash-equivalents/accounts/:account_id/ledger', getCashAccountLedger);
 
 // Expenses Route
-router.post('/expenses', require('../controllers/financialController').postExpense);
+router.post('/expenses', postExpense);
+router.get('/expenses', getAllExpenses);
 
 // Asset management
 router.get('/asset-types', getAssetTypes);
 router.get('/asset-accounts', getAssetAccounts);
+router.get('/depreciation-accounts', getDepreciationAccounts);
+router.get('/depreciation-history', getDepreciationHistory);
 router.post('/assets', addAsset);
 router.get('/assets', getAssets);
 router.post('/depreciation', postDepreciation);
+router.get('/assets-with-depreciation', getAllAssetsWithDepreciation);
+router.get('/assets-total-value', getAssetsTotalValue);
 
-router.post('/equity-entries', require('../controllers/financialController').addEquityEntry);
-router.get('/equity-entries', require('../controllers/financialController').listEquityEntries);
+router.post('/equity-entries', addEquityEntry);
+router.get('/equity-entries', listEquityEntries);
+router.post('/equity-entries/bulk', addBulkEquityEntries);
+
+// Journal entries route
+router.get('/journal-entries', reportsController.listJournalEntries);
+
+// General Ledger Report
+router.get('/general-ledger', reportsController.getGeneralLedger);
+
+// Inventory Transactions
+router.get('/inventory-transactions', storeController.getInventoryTransactions);
+
+// Inventory as of date
+router.get('/inventory-as-of', storeController.getInventoryAsOfDate);
+
+// Stock Transfer
+router.post('/stock-transfer', storeController.recordStockTransfer);
+router.get('/transfer-history', storeController.getTransferHistory);
+router.post('/stock-take', storeController.recordStockTake);
+router.get('/stock-take-history', storeController.getStockTakeHistory);
+router.get('/stock-take/:stock_take_id/items', storeController.getStockTakeItems);
+
+router.get('/categories', getAllCategories);
+router.post('/categories', addCategory);
+router.put('/categories/:id', updateCategory);
+router.delete('/categories/:id', deleteCategory);
+router.get('/categories/:id/price-options', getCategoryPriceOptions);
+router.post('/categories/:id/price-options', addCategoryPriceOption);
+router.put('/price-options/:id', updateCategoryPriceOption);
+router.delete('/price-options/:id', deleteCategoryPriceOption);
+
+router.get('/sales-reps', getSalesReps);
 
 module.exports = router; 

@@ -8,13 +8,25 @@ const purchaseOrderController = {
         SELECT 
           po.*,
           s.company_name as supplier_name,
-          u.full_name as created_by_name
+          u.full_name as created_by_name,
+          (
+            SELECT COALESCE(SUM(amount), 0)
+            FROM payments
+            WHERE payments.purchase_order_id = po.id AND payments.status = 'confirmed'
+          ) as amount_paid
         FROM purchase_orders po
         LEFT JOIN suppliers s ON po.supplier_id = s.id
         LEFT JOIN users u ON po.created_by = u.id
         ORDER BY po.created_at DESC
       `);
-      res.json({ success: true, data: rows });
+
+      // Add balance_remaining field
+      const data = rows.map(po => ({
+        ...po,
+        balance_remaining: Number(po.total_amount) - Number(po.amount_paid || 0)
+      }));
+
+      res.json({ success: true, data });
     } catch (error) {
       console.error('Error fetching purchase orders:', error);
       res.status(500).json({ success: false, error: 'Failed to fetch purchase orders' });
@@ -297,6 +309,22 @@ const purchaseOrderController = {
           ON DUPLICATE KEY UPDATE 
           quantity = quantity + ?
         `, [storeId, product_id, received_quantity, received_quantity]);
+
+        // --- Insert into inventory_transactions ---
+        // Get last balance for this product/store
+        const [lastTrans] = await connection.query(
+          'SELECT balance FROM inventory_transactions WHERE product_id = ? AND store_id = ? ORDER BY date_received DESC, id DESC LIMIT 1',
+          [product_id, storeId]
+        );
+        const prevBalance = lastTrans.length > 0 ? parseFloat(lastTrans[0].balance) : 0;
+        const newBalance = prevBalance + received_quantity;
+        await connection.query(
+          `INSERT INTO inventory_transactions 
+            (product_id, reference, amount_in, amount_out, unit_cost, total_cost, balance, date_received, store_id, staff_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
+          [product_id, purchaseOrders[0].po_number, received_quantity, 0, unit_cost, total_cost, newBalance, storeId, 1]
+        );
+        // --- End inventory_transactions insert ---
 
         // Update purchase order item received quantity
         await connection.query(`

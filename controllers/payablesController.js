@@ -60,7 +60,7 @@ const payablesController = {
       const prevAccountBalance = lastAccountLedger.length > 0 ? parseFloat(lastAccountLedger[0].running_balance) : 0;
       const newAccountBalance = prevAccountBalance - amount;
 
-      // Insert into account_ledger (credit, reduces cash/bank)
+      // Insert into account_ledger (credit, reduces cash/bank) - but don't affect running balance yet
       await connection.query(
         `INSERT INTO account_ledger (account_id, date, description, reference_type, reference_id, debit, credit, running_balance, status)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'in pay')`,
@@ -72,45 +72,12 @@ const payablesController = {
           paymentId,
           0,
           amount,
-          newAccountBalance
+          prevAccountBalance, // Keep the previous balance until confirmed
+          'in pay'
         ]
       );
 
-      // Create a journal entry: Debit Accounts Payable, Credit Cash/Bank
-      const [apAccount] = await connection.query(
-        `SELECT id FROM chart_of_accounts WHERE account_code = '2000' LIMIT 1`
-      );
-      const [cashAccount] = await connection.query(
-        `SELECT id FROM chart_of_accounts WHERE account_code = '1000' LIMIT 1`
-      );
-      if (apAccount.length && cashAccount.length) {
-        const [journalResult] = await connection.query(
-          `INSERT INTO journal_entries (entry_number, entry_date, reference, description, total_debit, total_credit, status, created_by)
-           VALUES (?, ?, ?, ?, ?, ?, 'posted', ?)`,
-          [
-            `JE-PAY-${supplier_id}-${Date.now()}`,
-            payment_date,
-            `PAY-${paymentId}`,
-            `Supplier payment`,
-            amount,
-            amount,
-            1
-          ]
-        );
-        const journalEntryId = journalResult.insertId;
-        // Debit Accounts Payable
-        await connection.query(
-          `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
-           VALUES (?, ?, ?, 0, ?)`,
-          [journalEntryId, apAccount[0].id, amount, `Supplier payment`]
-        );
-        // Credit Cash/Bank
-        await connection.query(
-          `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
-           VALUES (?, ?, 0, ?, ?)`,
-          [journalEntryId, cashAccount[0].id, amount, `Supplier payment`]
-        );
-      }
+      // Note: Journal entries will be created only when payment is confirmed
 
       await connection.commit();
       res.json({ success: true, message: 'Payment recorded successfully' });
@@ -174,6 +141,24 @@ const payablesController = {
            WHERE reference_type = ? AND reference_id = ?`,
           [newBalance, 'payment', payment_id]
         );
+
+        // Recalculate running balances for all subsequent entries
+        const [subsequentEntries] = await connection.query(
+          'SELECT * FROM account_ledger WHERE account_id = ? AND id > ? ORDER BY id ASC',
+          [entry.account_id, entry.id]
+        );
+
+        let currentBalance = newBalance;
+        for (const subsequentEntry of subsequentEntries) {
+          const debit = parseFloat(subsequentEntry.debit || 0);
+          const credit = parseFloat(subsequentEntry.credit || 0);
+          currentBalance = currentBalance + debit - credit;
+          
+          await connection.query(
+            'UPDATE account_ledger SET running_balance = ? WHERE id = ?',
+            [currentBalance, subsequentEntry.id]
+          );
+        }
       }
 
       // Insert debit entry into supplier_ledger to reduce the payable balance
@@ -184,7 +169,7 @@ const payablesController = {
       const prevSupplierBalance = lastSupplierLedger.length > 0 ? parseFloat(lastSupplierLedger[0].running_balance) : 0;
       const newSupplierBalance = prevSupplierBalance - payment.amount;
 
-      await connection.query(
+      const [supplierLedgerResult] = await connection.query(
         `INSERT INTO supplier_ledger (supplier_id, date, description, reference_type, reference_id, debit, credit, running_balance)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
@@ -198,6 +183,67 @@ const payablesController = {
           newSupplierBalance
         ]
       );
+
+      // Recalculate running balances for all subsequent supplier ledger entries
+      const [subsequentSupplierEntries] = await connection.query(
+        'SELECT * FROM supplier_ledger WHERE supplier_id = ? AND id > ? ORDER BY id ASC',
+        [payment.supplier_id, supplierLedgerResult.insertId]
+      );
+
+      let currentSupplierBalance = newSupplierBalance;
+      for (const subsequentEntry of subsequentSupplierEntries) {
+        const debit = parseFloat(subsequentEntry.debit || 0);
+        const credit = parseFloat(subsequentEntry.credit || 0);
+        currentSupplierBalance = currentSupplierBalance + debit - credit;
+        
+        await connection.query(
+          'UPDATE supplier_ledger SET running_balance = ? WHERE id = ?',
+          [currentSupplierBalance, subsequentEntry.id]
+        );
+      }
+
+      // Create a journal entry: Debit Accounts Payable, Credit Cash/Bank
+      const [apAccount] = await connection.query(
+        `SELECT id FROM chart_of_accounts WHERE account_code = '210000' LIMIT 1`
+      );
+      const [cashAccount] = await connection.query(
+        `SELECT id FROM chart_of_accounts WHERE account_code = '120004' LIMIT 1`
+      );
+      
+      if (apAccount.length && cashAccount.length) {
+        const [journalResult] = await connection.query(
+          `INSERT INTO journal_entries (entry_number, entry_date, reference, description, total_debit, total_credit, status, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, 'posted', ?)`,
+          [
+            `JE-PAY-${payment.supplier_id}-${Date.now()}`,
+            payment.payment_date,
+            `PAY-${payment_id}`,
+            `Supplier payment`,
+            payment.amount,
+            payment.amount,
+            1
+          ]
+        );
+        const journalEntryId = journalResult.insertId;
+        
+        // Debit Accounts Payable
+        await connection.query(
+          `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+           VALUES (?, ?, ?, 0, ?)`,
+          [journalEntryId, apAccount[0].id, payment.amount, `Supplier payment`]
+        );
+        
+        // Credit Cash/Bank
+        await connection.query(
+          `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+           VALUES (?, ?, 0, ?, ?)`,
+          [journalEntryId, cashAccount[0].id, payment.amount, `Supplier payment`]
+        );
+      } else {
+        console.error('Required accounts not found for journal entry creation');
+        console.error('AP Account (210000):', apAccount);
+        console.error('Cash Account (120004):', cashAccount);
+      }
 
       await connection.commit();
       res.json({ success: true, message: 'Payment confirmed.' });

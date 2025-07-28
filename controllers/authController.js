@@ -6,17 +6,21 @@ const login = async (req, res) => {
   try {
     const { username, password } = req.body;
 
-    // Get user from database
-    const [users] = await db.query(
-      'SELECT * FROM users WHERE username = ?',
+    // Get staff from database by name
+    const [staff] = await db.query(
+      'SELECT * FROM staff WHERE name = ?',
       [username]
     );
 
-    if (users.length === 0) {
+    if (staff.length === 0) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    const user = users[0];
+    const user = staff[0];
+
+    if (!user.password) {
+      return res.status(401).json({ message: 'No password set for this staff member' });
+    }
 
     // Compare password
     const isValidPassword = await bcrypt.compare(password, user.password);
@@ -28,7 +32,7 @@ const login = async (req, res) => {
     const token = jwt.sign(
       { 
         userId: user.id,
-        username: user.username,
+        name: user.name,
         role: user.role 
       },
       process.env.JWT_SECRET || 'your-secret-key',
@@ -39,8 +43,8 @@ const login = async (req, res) => {
       token,
       user: {
         id: user.id,
-        username: user.username,
-        email: user.email,
+        name: user.name,
+        email: user.business_email,
         role: user.role
       }
     });

@@ -13,28 +13,52 @@ const clientController = require('./controllers/clientController');
 const branchController = require('./controllers/branchController');
 const serviceChargeController = require('./controllers/serviceChargeController');
 const journeyPlanController = require('./controllers/journeyPlanController');
-const sosController = require('./controllers/sosController');
+const payrollRoutes = require('./routes/payrollRoutes');
+
 const financialRoutes = require('./routes/financialRoutes');
 const staffRoutes = require('./routes/staffRoutes');
 const chatRoutes = require('./routes/chatRoutes');
 const http = require('http');
 const { Server } = require('socket.io');
 require('dotenv').config();
+const clientRoutes = require('./routes/clientRoutes');
+const salesRoutes = require('./routes/salesRoutes');
+const managerRoutes = require('./routes/managerRoutes');
+const noticeRoutes = require('./routes/noticeRoutes');
+const salesRepLeaveRoutes = require('./routes/leaveRoutes');
+const calendarTaskRoutes = require('./routes/calendarTaskRoutes');
+const userRoutes = require('./routes/userRoutes');
+const loginHistoryRoutes = require('./routes/loginHistoryRoutes');
+const journeyPlanRoutes = require('./routes/journeyPlanRoutes');
+const riderRoutes = require('./routes/riderRoutes');
+const myVisibilityReportRoutes = require('./routes/myVisibilityReportRoutes');
+const feedbackReportRoutes = require('./routes/feedbackReportRoutes');
+const availabilityReportRoutes = require('./routes/availabilityReportRoutes');
+const leaveRequestRoutes = require('./routes/leaveRequestRoutes');
 
 const app = express();
 
-// CORS configuration
+// Move CORS middleware to the very top
 const corsOptions = {
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173', // Vite's default port
+  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
   optionsSuccessStatus: 200
 };
+app.use(cors(corsOptions));
+
+// Register /api/riders route before any parameterized routes
+app.use('/api/riders', riderRoutes);
 
 // Middleware
-app.use(cors(corsOptions));
 app.use(express.json());
+
+// Register all specific endpoints FIRST
+app.use('/api/my-visibility-reports', myVisibilityReportRoutes);
+app.use('/api/feedback-reports', feedbackReportRoutes);
+app.use('/api/availability-reports', availabilityReportRoutes);
+app.use('/api/leave-requests', leaveRequestRoutes);
 
 // Helper function to map database fields to frontend fields
 const mapRequestFields = (request) => {
@@ -66,51 +90,56 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ message: 'Username and password are required' });
     }
 
-    // Get user from database
-    console.log('Querying database for user:', username);
-    const [users] = await db.query(
-      'SELECT * FROM users WHERE username = ?',
+    // Get staff from database by name
+    console.log('Querying database for staff by name:', username);
+    const [staff] = await db.query(
+      'SELECT * FROM staff WHERE name = ?',
       [username]
     );
 
-    console.log('Database query result:', users);
+    console.log('Database query result:', staff);
 
-    if (users.length === 0) {
-      console.log('No user found with username:', username);
+    if (staff.length === 0) {
+      console.log('No staff found with name:', username);
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    const user = users[0];
+    const user = staff[0];
+
+    if (!user.password) {
+      console.log('No password set for this staff member:', username);
+      return res.status(401).json({ message: 'No password set for this staff member' });
+    }
 
     // Compare password
     console.log('Comparing passwords...');
-    const isValidPassword = await bcrypt.compare(password, user.password_hash);
+    const isValidPassword = await bcrypt.compare(password, user.password);
     console.log('Password comparison result:', isValidPassword);
 
     if (!isValidPassword) {
-      console.log('Invalid password for user:', username);
+      console.log('Invalid password for staff:', username);
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
     // Create JWT token
-    console.log('Creating JWT token for user:', username);
+    console.log('Creating JWT token for staff:', username);
     const token = jwt.sign(
       { 
         userId: user.id,
-        username: user.username,
+        name: user.name,
         role: user.role 
       },
       process.env.JWT_SECRET || 'your-secret-key',
       { expiresIn: '24h' }
     );
 
-    console.log('Login successful for user:', username);
+    console.log('Login successful for staff:', username);
     res.json({
       token,
       user: {
         id: user.id,
-        username: user.username,
-        email: user.email,
+        name: user.name,
+        email: user.business_email,
         role: user.role
       }
     });
@@ -232,15 +261,15 @@ app.post('/api/requests', async (req, res) => {
       return res.status(400).json({ message: 'Invalid service type' });
     }
 
-    // Check if user exists
-    const [users] = await db.query(
-      'SELECT id FROM users WHERE id = ?',
+    // Check if staff exists
+    const [staff] = await db.query(
+      'SELECT id FROM staff WHERE id = ?',
       [userId]
     );
 
-    if (users.length === 0) {
-      console.error('User not found:', userId);
-      return res.status(400).json({ message: 'Invalid user' });
+    if (staff.length === 0) {
+      console.error('Staff not found:', userId);
+      return res.status(400).json({ message: 'Invalid staff member' });
     }
 
     // Insert request into database
@@ -344,11 +373,7 @@ app.post('/api/teams', teamController.createTeam);
 app.get('/api/teams', teamController.getTeams);
 
 // Client routes
-app.get('/api/clients', clientController.getAllClients);
-app.get('/api/clients/:id', clientController.getClient);
-app.post('/api/clients', clientController.createClient);
-app.put('/api/clients/:id', clientController.updateClient);
-app.delete('/api/clients/:id', clientController.deleteClient);
+app.use('/api/clients', clientRoutes);
 app.get('/api/clients/:clientId/branches', branchController.getAllBranches);
 app.post('/api/clients/:clientId/branches', branchController.createBranch);
 app.put('/api/clients/:clientId/branches/:branchId', branchController.updateBranch);
@@ -359,34 +384,865 @@ app.put('/api/clients/:clientId/service-charges/:chargeId', serviceChargeControl
 app.delete('/api/clients/:clientId/service-charges/:chargeId', serviceChargeController.deleteServiceCharge);
 
 // Journey Plan routes
+app.use('/api/journey-plans', journeyPlanRoutes);
 app.get('/api/journey-plans', journeyPlanController.getJourneyPlans);
 app.get('/api/journey-plans/:id', journeyPlanController.getJourneyPlan);
 app.post('/api/journey-plans', journeyPlanController.createJourneyPlan);
 app.patch('/api/journey-plans/:id', journeyPlanController.updateJourneyPlan);
 app.delete('/api/journey-plans/:id', journeyPlanController.deleteJourneyPlan);
 
-// SOS routes
-app.get('/api/sos', async (req, res) => {
-  try {
-    console.log('SOS route hit');
-    const [sosList] = await db.query('SELECT * FROM sos');
-    console.log('SOS data:', sosList);
-    res.json(sosList);
-  } catch (error) {
-    console.error('Error in SOS route:', error);
-    res.status(500).json({ message: 'Failed to fetch SOS data' });
-  }
-});
 
-app.get('/api/sos/:id', sosController.getSos);
-app.post('/api/sos', sosController.createSos);
-app.patch('/api/sos/:id', sosController.updateSos);
-app.delete('/api/sos/:id', sosController.deleteSos);
 
 // Financial System Routes
 app.use('/api/financial', financialRoutes);
+app.use('/api/payroll', payrollRoutes);
 app.use('/api', staffRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/managers', managerRoutes);
+app.use('/api/sales', salesRoutes);
+app.use('/api/notices', noticeRoutes);
+app.use('/api/login-history', loginHistoryRoutes);
+app.use('/api', clientRoutes);
+app.use('/api/sales-rep-leaves', salesRepLeaveRoutes);
+app.use('/api/calendar-tasks', calendarTaskRoutes);
+app.use('/api/users', userRoutes);
+
+// Visibility Reports route
+app.get('/api/visibility-reports', async (req, res) => {
+  try {
+    console.log('Visibility reports route hit!');
+    
+    const { startDate, endDate, currentDate, page = 1, limit = 10, country, salesRep, search } = req.query;
+    const isViewAll = parseInt(limit) === -1;
+    const offset = isViewAll ? 0 : (parseInt(page) - 1) * parseInt(limit);
+    
+    let sql = `
+      SELECT vr.id, vr.reportId, vr.comment, vr.imageUrl, vr.createdAt,
+             c.name AS outlet, co.name AS country, u.name AS salesRep
+      FROM VisibilityReport vr
+      LEFT JOIN Clients c ON vr.clientId = c.id
+      LEFT JOIN Country co ON c.countryId = co.id
+      LEFT JOIN SalesRep u ON vr.userId = u.id
+    `;
+    
+    let countSql = `
+      SELECT COUNT(*) as total
+      FROM VisibilityReport vr
+      LEFT JOIN Clients c ON vr.clientId = c.id
+      LEFT JOIN Country co ON c.countryId = co.id
+      LEFT JOIN SalesRep u ON vr.userId = u.id
+    `;
+    
+    const params = [];
+    const countParams = [];
+    let whereConditions = [];
+    
+    // If currentDate is provided, filter by current date first
+    if (currentDate) {
+      whereConditions.push(`DATE(vr.createdAt) = ?`);
+      params.push(currentDate);
+      countParams.push(currentDate);
+    }
+    // If date range is provided, filter by date range
+    else if (startDate && endDate) {
+      whereConditions.push(`DATE(vr.createdAt) BETWEEN ? AND ?`);
+      params.push(startDate, endDate);
+      countParams.push(startDate, endDate);
+    }
+    // If only startDate is provided, filter from that date onwards
+    else if (startDate) {
+      whereConditions.push(`DATE(vr.createdAt) >= ?`);
+      params.push(startDate);
+      countParams.push(startDate);
+    }
+    // If only endDate is provided, filter up to that date
+    else if (endDate) {
+      whereConditions.push(`DATE(vr.createdAt) <= ?`);
+      params.push(endDate);
+      countParams.push(endDate);
+    }
+    
+    // Add country filter
+    if (country && country !== 'all') {
+      whereConditions.push(`co.name = ?`);
+      params.push(country);
+      countParams.push(country);
+    }
+    
+    // Add sales rep filter
+    if (salesRep && salesRep !== 'all') {
+      whereConditions.push(`u.name = ?`);
+      params.push(salesRep);
+      countParams.push(salesRep);
+    }
+    
+    // Add search filter
+    if (search && search.trim()) {
+      const searchTerm = `%${search.trim()}%`;
+      whereConditions.push(`(c.name LIKE ? OR co.name LIKE ? OR u.name LIKE ? OR vr.comment LIKE ?)`);
+      params.push(searchTerm, searchTerm, searchTerm, searchTerm);
+      countParams.push(searchTerm, searchTerm, searchTerm, searchTerm);
+    }
+    
+    // Add WHERE clause if there are conditions
+    if (whereConditions.length > 0) {
+      const whereClause = ` WHERE ${whereConditions.join(' AND ')}`;
+      sql += whereClause;
+      countSql += whereClause;
+    }
+    
+    sql += ` ORDER BY vr.createdAt DESC`;
+    
+    // Add LIMIT and OFFSET only if not viewing all
+    if (!isViewAll) {
+      sql += ` LIMIT ? OFFSET ?`;
+      params.push(parseInt(limit), offset);
+    }
+    
+    const [results] = await db.query(sql, params);
+    const [countResult] = await db.query(countSql, countParams);
+    const total = countResult[0].total;
+    
+    res.json({ 
+      success: true, 
+      data: results,
+      pagination: {
+        page: isViewAll ? 1 : parseInt(page),
+        limit: isViewAll ? total : parseInt(limit),
+        total,
+        totalPages: isViewAll ? 1 : Math.ceil(total / parseInt(limit))
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching visibility reports:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Visibility Reports CSV Export route
+app.get('/api/visibility-reports/export', async (req, res) => {
+  try {
+    console.log('Visibility reports CSV export route hit!');
+    
+    const { startDate, endDate, currentDate, country, salesRep, search } = req.query;
+    
+    let sql = `
+      SELECT vr.id, vr.reportId, vr.comment, vr.imageUrl, vr.createdAt,
+             c.name AS outlet, co.name AS country, u.name AS salesRep
+      FROM VisibilityReport vr
+      LEFT JOIN Clients c ON vr.clientId = c.id
+      LEFT JOIN Country co ON c.countryId = co.id
+      LEFT JOIN SalesRep u ON vr.userId = u.id
+    `;
+    
+    const params = [];
+    let whereConditions = [];
+    
+    // If currentDate is provided, filter by current date first
+    if (currentDate) {
+      whereConditions.push(`DATE(vr.createdAt) = ?`);
+      params.push(currentDate);
+    }
+    // If date range is provided, filter by date range
+    else if (startDate && endDate) {
+      whereConditions.push(`DATE(vr.createdAt) BETWEEN ? AND ?`);
+      params.push(startDate, endDate);
+    }
+    // If only startDate is provided, filter from that date onwards
+    else if (startDate) {
+      whereConditions.push(`DATE(vr.createdAt) >= ?`);
+      params.push(startDate);
+    }
+    // If only endDate is provided, filter up to that date
+    else if (endDate) {
+      whereConditions.push(`DATE(vr.createdAt) <= ?`);
+      params.push(endDate);
+    }
+    
+    // Add country filter
+    if (country && country !== 'all') {
+      whereConditions.push(`co.name = ?`);
+      params.push(country);
+    }
+    
+    // Add sales rep filter
+    if (salesRep && salesRep !== 'all') {
+      whereConditions.push(`u.name = ?`);
+      params.push(salesRep);
+    }
+    
+    // Add search filter
+    if (search && search.trim()) {
+      const searchTerm = `%${search.trim()}%`;
+      whereConditions.push(`(c.name LIKE ? OR co.name LIKE ? OR u.name LIKE ? OR vr.comment LIKE ?)`);
+      params.push(searchTerm, searchTerm, searchTerm, searchTerm);
+    }
+    
+    // Add WHERE clause if there are conditions
+    if (whereConditions.length > 0) {
+      sql += ` WHERE ${whereConditions.join(' AND ')}`;
+    }
+    
+    sql += ` ORDER BY vr.createdAt DESC`;
+    
+    const [results] = await db.query(sql, params);
+    
+    // Create CSV header information
+    const exportDate = new Date().toLocaleDateString('en-US', { 
+      weekday: 'long', 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric' 
+    });
+    
+    let filterDate;
+    if (currentDate) {
+      filterDate = new Date(currentDate).toLocaleDateString('en-US', { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      });
+    } else if (startDate && endDate) {
+      const start = new Date(startDate).toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric', 
+        year: 'numeric' 
+      });
+      const end = new Date(endDate).toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric', 
+        year: 'numeric' 
+      });
+      filterDate = startDate === endDate ? start : `${start} - ${end}`;
+    } else if (startDate) {
+      filterDate = `From ${new Date(startDate).toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric', 
+        year: 'numeric' 
+      })}`;
+    } else if (endDate) {
+      filterDate = `Until ${new Date(endDate).toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric', 
+        year: 'numeric' 
+      })}`;
+    } else {
+      filterDate = 'All Dates';
+    }
+    
+    const reportCount = results.length;
+    
+    // Create CSV content with header information
+    const csvHeader = [
+      ['Visibility Reports Export'],
+      [''],
+      ['Export Date:', exportDate],
+      ['Filter Date:', filterDate],
+      ['Filter Country:', country && country !== 'all' ? country : 'All Countries'],
+      ['Filter Sales Rep:', salesRep && salesRep !== 'all' ? salesRep : 'All Sales Reps'],
+      ['Filter Search:', search && search.trim() ? search.trim() : 'No Search'],
+      ['Total Reports:', reportCount.toString()],
+      [''],
+      ['ID', 'Report ID', 'Outlet', 'Country', 'Sales Rep', 'Comment', 'Image URL', 'Created At']
+    ];
+    
+    const csvData = results.map(row => [
+      row.id,
+      row.reportId,
+      row.outlet || 'N/A',
+      row.country || 'N/A',
+      row.salesRep || 'N/A',
+      row.comment || 'N/A',
+      row.imageUrl || 'N/A',
+      new Date(row.createdAt).toLocaleString()
+    ]);
+    
+    const csvContent = [...csvHeader, ...csvData]
+      .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    
+    // Set headers for CSV download
+    const filename = `visibility-reports-${new Date().toISOString().split('T')[0]}.csv`;
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    
+    res.send(csvContent);
+  } catch (err) {
+    console.error('Error exporting visibility reports:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Get available countries for filtering
+app.get('/api/countries', async (req, res) => {
+  try {
+    console.log('Countries route hit!');
+    
+    const sql = `
+      SELECT DISTINCT co.id, co.name
+      FROM Country co
+      INNER JOIN Clients c ON c.countryId = co.id
+      INNER JOIN VisibilityReport vr ON vr.clientId = c.id
+      ORDER BY co.name ASC
+    `;
+    
+    const [results] = await db.query(sql);
+    res.json({ success: true, data: results });
+  } catch (err) {
+    console.error('Error fetching countries:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/regions', async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT name FROM Regions ORDER BY name');
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Get available sales reps for filtering
+app.get('/api/sales-reps', async (req, res) => {
+  try {
+    console.log('Sales reps route hit!');
+    
+    const sql = `
+      SELECT DISTINCT u.id, u.name
+      FROM SalesRep u
+      INNER JOIN VisibilityReport vr ON vr.userId = u.id
+      ORDER BY u.name ASC
+    `;
+    
+    const [results] = await db.query(sql);
+    res.json({ success: true, data: results });
+  } catch (err) {
+    console.error('Error fetching sales reps:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Feedback Reports route
+app.get('/api/feedback-reports', async (req, res) => {
+  try {
+    console.log('Feedback reports route hit!');
+    
+    const { startDate, endDate, currentDate, page = 1, limit = 10, country, salesRep, search } = req.query;
+    const isViewAll = parseInt(limit) === -1;
+    const offset = isViewAll ? 0 : (parseInt(page) - 1) * parseInt(limit);
+    
+    let sql = `
+      SELECT fr.id, fr.reportId, fr.comment, fr.createdAt,
+             c.name AS outlet, co.name AS country, u.name AS salesRep
+      FROM FeedbackReport fr
+      LEFT JOIN Clients c ON fr.clientId = c.id
+      LEFT JOIN Country co ON c.countryId = co.id
+      LEFT JOIN SalesRep u ON fr.userId = u.id
+    `;
+    
+    let countSql = `
+      SELECT COUNT(*) as total
+      FROM FeedbackReport fr
+      LEFT JOIN Clients c ON fr.clientId = c.id
+      LEFT JOIN Country co ON c.countryId = co.id
+      LEFT JOIN SalesRep u ON fr.userId = u.id
+    `;
+    
+    const params = [];
+    const countParams = [];
+    let whereConditions = [];
+    
+    // If currentDate is provided, filter by current date first
+    if (currentDate) {
+      whereConditions.push(`DATE(fr.createdAt) = ?`);
+      params.push(currentDate);
+      countParams.push(currentDate);
+    }
+    // If date range is provided, filter by date range
+    else if (startDate && endDate) {
+      whereConditions.push(`DATE(fr.createdAt) BETWEEN ? AND ?`);
+      params.push(startDate, endDate);
+      countParams.push(startDate, endDate);
+    }
+    // If only startDate is provided, filter from that date onwards
+    else if (startDate) {
+      whereConditions.push(`DATE(fr.createdAt) >= ?`);
+      params.push(startDate);
+      countParams.push(startDate);
+    }
+    // If only endDate is provided, filter up to that date
+    else if (endDate) {
+      whereConditions.push(`DATE(fr.createdAt) <= ?`);
+      params.push(endDate);
+      countParams.push(endDate);
+    }
+    
+    // Add country filter
+    if (country && country !== 'all') {
+      whereConditions.push(`co.name = ?`);
+      params.push(country);
+      countParams.push(country);
+    }
+    
+    // Add sales rep filter
+    if (salesRep && salesRep !== 'all') {
+      whereConditions.push(`u.name = ?`);
+      params.push(salesRep);
+      countParams.push(salesRep);
+    }
+    
+    // Add search filter
+    if (search && search.trim()) {
+      const searchTerm = `%${search.trim()}%`;
+      whereConditions.push(`(c.name LIKE ? OR co.name LIKE ? OR u.name LIKE ? OR fr.comment LIKE ?)`);
+      params.push(searchTerm, searchTerm, searchTerm, searchTerm);
+      countParams.push(searchTerm, searchTerm, searchTerm, searchTerm);
+    }
+    
+    // Add WHERE clause if there are conditions
+    if (whereConditions.length > 0) {
+      const whereClause = ` WHERE ${whereConditions.join(' AND ')}`;
+      sql += whereClause;
+      countSql += whereClause;
+    }
+    
+    sql += ` ORDER BY fr.createdAt DESC`;
+    
+    // Add LIMIT and OFFSET only if not viewing all
+    if (!isViewAll) {
+      sql += ` LIMIT ? OFFSET ?`;
+      params.push(parseInt(limit), offset);
+    }
+    
+    const [results] = await db.query(sql, params);
+    const [countResult] = await db.query(countSql, countParams);
+    const total = countResult[0].total;
+    
+    res.json({ 
+      success: true, 
+      data: results,
+      pagination: {
+        page: isViewAll ? 1 : parseInt(page),
+        limit: isViewAll ? total : parseInt(limit),
+        total,
+        totalPages: isViewAll ? 1 : Math.ceil(total / parseInt(limit))
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching feedback reports:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Feedback Reports CSV Export route
+app.get('/api/feedback-reports/export', async (req, res) => {
+  try {
+    console.log('Feedback reports CSV export route hit!');
+    
+    const { startDate, endDate, currentDate, country, salesRep, search } = req.query;
+    
+    let sql = `
+      SELECT fr.id, fr.reportId, fr.comment, fr.createdAt,
+             c.name AS outlet, co.name AS country, u.name AS salesRep
+      FROM FeedbackReport fr
+      LEFT JOIN Clients c ON fr.clientId = c.id
+      LEFT JOIN Country co ON c.countryId = co.id
+      LEFT JOIN SalesRep u ON fr.userId = u.id
+    `;
+    
+    const params = [];
+    let whereConditions = [];
+    
+    // If currentDate is provided, filter by current date first
+    if (currentDate) {
+      whereConditions.push(`DATE(fr.createdAt) = ?`);
+      params.push(currentDate);
+    }
+    // If date range is provided, filter by date range
+    else if (startDate && endDate) {
+      whereConditions.push(`DATE(fr.createdAt) BETWEEN ? AND ?`);
+      params.push(startDate, endDate);
+    }
+    // If only startDate is provided, filter from that date onwards
+    else if (startDate) {
+      whereConditions.push(`DATE(fr.createdAt) >= ?`);
+      params.push(startDate);
+    }
+    // If only endDate is provided, filter up to that date
+    else if (endDate) {
+      whereConditions.push(`DATE(fr.createdAt) <= ?`);
+      params.push(endDate);
+    }
+    
+    // Add country filter
+    if (country && country !== 'all') {
+      whereConditions.push(`co.name = ?`);
+      params.push(country);
+    }
+    
+    // Add sales rep filter
+    if (salesRep && salesRep !== 'all') {
+      whereConditions.push(`u.name = ?`);
+      params.push(salesRep);
+    }
+    
+    // Add search filter
+    if (search && search.trim()) {
+      const searchTerm = `%${search.trim()}%`;
+      whereConditions.push(`(c.name LIKE ? OR co.name LIKE ? OR u.name LIKE ? OR fr.comment LIKE ?)`);
+      params.push(searchTerm, searchTerm, searchTerm, searchTerm);
+    }
+    
+    // Add WHERE clause if there are conditions
+    if (whereConditions.length > 0) {
+      sql += ` WHERE ${whereConditions.join(' AND ')}`;
+    }
+    
+    sql += ` ORDER BY fr.createdAt DESC`;
+    
+    const [results] = await db.query(sql, params);
+    
+    // Create CSV header information
+    const exportDate = new Date().toLocaleDateString('en-US', { 
+      weekday: 'long', 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric' 
+    });
+    
+    let filterDate;
+    if (currentDate) {
+      filterDate = new Date(currentDate).toLocaleDateString('en-US', { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      });
+    } else if (startDate && endDate) {
+      const start = new Date(startDate).toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric', 
+        year: 'numeric' 
+      });
+      const end = new Date(endDate).toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric', 
+        year: 'numeric' 
+      });
+      filterDate = startDate === endDate ? start : `${start} - ${end}`;
+    } else if (startDate) {
+      filterDate = `From ${new Date(startDate).toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric', 
+        year: 'numeric' 
+      })}`;
+    } else if (endDate) {
+      filterDate = `Until ${new Date(endDate).toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric', 
+        year: 'numeric' 
+      })}`;
+    } else {
+      filterDate = 'All Dates';
+    }
+    
+    const reportCount = results.length;
+    
+    // Create CSV content with header information
+    const csvHeader = [
+      ['Feedback Reports Export'],
+      [''],
+      ['Export Date:', exportDate],
+      ['Filter Date:', filterDate],
+      ['Filter Country:', country && country !== 'all' ? country : 'All Countries'],
+      ['Filter Sales Rep:', salesRep && salesRep !== 'all' ? salesRep : 'All Sales Reps'],
+      ['Filter Search:', search && search.trim() ? search.trim() : 'No Search'],
+      ['Total Reports:', reportCount.toString()],
+      [''],
+      ['ID', 'Report ID', 'Outlet', 'Country', 'Sales Rep', 'Comment', 'Created At']
+    ];
+    
+    const csvData = results.map(row => [
+      row.id,
+      row.reportId,
+      row.outlet || 'N/A',
+      row.country || 'N/A',
+      row.salesRep || 'N/A',
+      row.comment || 'N/A',
+      new Date(row.createdAt).toLocaleString()
+    ]);
+    
+    const csvContent = [...csvHeader, ...csvData]
+      .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    
+    // Set headers for CSV download
+    const filename = `feedback-reports-${new Date().toISOString().split('T')[0]}.csv`;
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    
+    res.send(csvContent);
+  } catch (err) {
+    console.error('Error exporting feedback reports:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Get available countries for feedback filtering
+app.get('/api/feedback-countries', async (req, res) => {
+  try {
+    console.log('Feedback countries route hit!');
+    
+    const sql = `
+      SELECT DISTINCT co.id, co.name
+      FROM Country co
+      INNER JOIN Clients c ON c.countryId = co.id
+      INNER JOIN FeedbackReport fr ON fr.clientId = c.id
+      ORDER BY co.name ASC
+    `;
+    
+    const [results] = await db.query(sql);
+    res.json({ success: true, data: results });
+  } catch (err) {
+    console.error('Error fetching feedback countries:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Get available sales reps for feedback filtering
+app.get('/api/feedback-sales-reps', async (req, res) => {
+  try {
+    console.log('Feedback sales reps route hit!');
+    
+    const sql = `
+      SELECT DISTINCT u.id, u.name
+      FROM SalesRep u
+      INNER JOIN FeedbackReport fr ON fr.userId = u.id
+      ORDER BY u.name ASC
+    `;
+    
+    const [results] = await db.query(sql);
+    res.json({ success: true, data: results });
+  } catch (err) {
+    console.error('Error fetching feedback sales reps:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Availability Reports CSV Export route
+app.get('/api/availability-reports/export', async (req, res) => {
+  try {
+    console.log('Availability reports CSV export route hit!');
+    
+    const { startDate, endDate, currentDate, outlet, comment, country, salesRep, search } = req.query;
+    
+    let sql = `
+      SELECT pr.id, pr.reportId, pr.productName, pr.quantity, pr.comment, pr.createdAt,
+             c.name AS clientName, co.name AS countryName, u.name AS salesRepName
+      FROM ProductReport pr
+      LEFT JOIN Clients c ON pr.clientId = c.id
+      LEFT JOIN Country co ON c.countryId = co.id
+      LEFT JOIN SalesRep u ON pr.userId = u.id
+    `;
+    
+    const params = [];
+    let whereConditions = [];
+    
+    // If currentDate is provided, filter by current date first
+    if (currentDate) {
+      whereConditions.push(`DATE(pr.createdAt) = ?`);
+      params.push(currentDate);
+    }
+    // If date range is provided, filter by date range
+    else if (startDate && endDate) {
+      whereConditions.push(`DATE(pr.createdAt) BETWEEN ? AND ?`);
+      params.push(startDate, endDate);
+    }
+    // If only startDate is provided, filter from that date onwards
+    else if (startDate) {
+      whereConditions.push(`DATE(pr.createdAt) >= ?`);
+      params.push(startDate);
+    }
+    // If only endDate is provided, filter up to that date
+    else if (endDate) {
+      whereConditions.push(`DATE(pr.createdAt) <= ?`);
+      params.push(endDate);
+    }
+    
+    // Add outlet filter
+    if (outlet && outlet.trim()) {
+      whereConditions.push(`c.name LIKE ?`);
+      params.push(`%${outlet.trim()}%`);
+    }
+    
+    // Add comment filter
+    if (comment && comment.trim()) {
+      whereConditions.push(`pr.comment LIKE ?`);
+      params.push(`%${comment.trim()}%`);
+    }
+    
+    // Add country filter
+    if (country && country !== 'all') {
+      whereConditions.push(`co.name = ?`);
+      params.push(country);
+    }
+    
+    // Add sales rep filter
+    if (salesRep && salesRep !== 'all') {
+      whereConditions.push(`u.name = ?`);
+      params.push(salesRep);
+    }
+    
+    // Add search filter
+    if (search && search.trim()) {
+      const searchTerm = `%${search.trim()}%`;
+      whereConditions.push(`(c.name LIKE ? OR co.name LIKE ? OR u.name LIKE ? OR pr.comment LIKE ? OR pr.productName LIKE ?)`);
+      params.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm);
+    }
+    
+    // Add WHERE clause if there are conditions
+    if (whereConditions.length > 0) {
+      sql += ` WHERE ${whereConditions.join(' AND ')}`;
+    }
+    
+    sql += ` ORDER BY pr.createdAt DESC`;
+    
+    const [results] = await db.query(sql, params);
+    
+    // Create CSV header information
+    const exportDate = new Date().toLocaleDateString('en-US', { 
+      weekday: 'long', 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric' 
+    });
+    
+    let filterDate;
+    if (currentDate) {
+      filterDate = new Date(currentDate).toLocaleDateString('en-US', { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      });
+    } else if (startDate && endDate) {
+      const start = new Date(startDate).toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric', 
+        year: 'numeric' 
+      });
+      const end = new Date(endDate).toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric', 
+        year: 'numeric' 
+      });
+      filterDate = startDate === endDate ? start : `${start} - ${end}`;
+    } else if (startDate) {
+      filterDate = `From ${new Date(startDate).toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric', 
+        year: 'numeric' 
+      })}`;
+    } else if (endDate) {
+      filterDate = `Until ${new Date(endDate).toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric', 
+        year: 'numeric' 
+      })}`;
+    } else {
+      filterDate = 'All Dates';
+    }
+    
+    const reportCount = results.length;
+    
+    // Create CSV content with header information
+    const csvHeader = [
+      ['Availability Reports Export'],
+      [''],
+      ['Export Date:', exportDate],
+      ['Filter Date:', filterDate],
+      ['Filter Outlet:', outlet && outlet.trim() ? outlet.trim() : 'All Outlets'],
+      ['Filter Comment:', comment && comment.trim() ? comment.trim() : 'All Comments'],
+      ['Filter Country:', country && country !== 'all' ? country : 'All Countries'],
+      ['Filter Sales Rep:', salesRep && salesRep !== 'all' ? salesRep : 'All Sales Reps'],
+      ['Filter Search:', search && search.trim() ? search.trim() : 'No Search'],
+      ['Total Reports:', reportCount.toString()],
+      [''],
+      ['ID', 'Report ID', 'Product Name', 'Quantity', 'Client', 'Country', 'Sales Rep', 'Comment', 'Created At']
+    ];
+    
+    const csvData = results.map(row => [
+      row.id,
+      row.reportId,
+      row.productName || 'N/A',
+      row.quantity || 'N/A',
+      row.clientName || 'N/A',
+      row.countryName || 'N/A',
+      row.salesRepName || 'N/A',
+      row.comment || 'N/A',
+      new Date(row.createdAt).toLocaleString()
+    ]);
+    
+    const csvContent = [...csvHeader, ...csvData]
+      .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    
+    // Set headers for CSV download
+    const filename = `availability-reports-${new Date().toISOString().split('T')[0]}.csv`;
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    
+    res.send(csvContent);
+  } catch (err) {
+    console.error('Error exporting availability reports:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Get available countries for availability filtering
+app.get('/api/availability-countries', async (req, res) => {
+  try {
+    console.log('Availability countries route hit!');
+    
+    const sql = `
+      SELECT DISTINCT co.name
+      FROM Country co
+      INNER JOIN Clients c ON c.countryId = co.id
+      INNER JOIN ProductReport pr ON pr.clientId = c.id
+      ORDER BY co.name ASC
+    `;
+    
+    const [results] = await db.query(sql);
+    const countries = results.map(row => row.name);
+    res.json(countries);
+  } catch (err) {
+    console.error('Error fetching availability countries:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Get available sales reps for availability filtering
+app.get('/api/availability-sales-reps', async (req, res) => {
+  try {
+    console.log('Availability sales reps route hit!');
+    
+    const sql = `
+      SELECT DISTINCT u.name
+      FROM SalesRep u
+      INNER JOIN ProductReport pr ON pr.userId = u.id
+      ORDER BY u.name ASC
+    `;
+    
+    const [results] = await db.query(sql);
+    const salesReps = results.map(row => row.name);
+    res.json(salesReps);
+  } catch (err) {
+    console.error('Error fetching availability sales reps:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 // Example API endpoint
 app.get('/api/test', (req, res) => {

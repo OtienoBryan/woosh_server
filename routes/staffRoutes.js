@@ -57,4 +57,11 @@ router.get('/attendance', attendanceController.getAllAttendance);
 router.post('/attendance/checkin', attendanceController.checkIn);
 router.post('/attendance/checkout', attendanceController.checkOut);
 
+// GET /api/employee-working-hours
+router.get('/employee-working-hours', staffController.getEmployeeWorkingHours);
+// GET /api/employee-working-days
+router.get('/employee-working-days', staffController.getEmployeeWorkingDays);
+// GET /api/out-of-office-requests
+router.get('/out-of-office-requests', staffController.getOutOfOfficeRequests);
+
 module.exports = router; 

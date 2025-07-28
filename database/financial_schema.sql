@@ -18,7 +18,7 @@ CREATE TABLE chart_of_accounts (
     id INT PRIMARY KEY AUTO_INCREMENT,
     account_code VARCHAR(20) UNIQUE NOT NULL,
     account_name VARCHAR(100) NOT NULL,
-    account_type ENUM('asset', 'liability', 'equity', 'revenue', 'expense') NOT NULL,
+    account_type INT NOT NULL, -- 1=asset, 2=liability, 13=equity, 17=depreciation, etc.
     parent_account_id INT NULL,
     description TEXT,
     is_active BOOLEAN DEFAULT TRUE,
@@ -288,39 +288,42 @@ DROP TABLE IF EXISTS asset_types;
 
 -- Insert default chart of accounts
 INSERT INTO chart_of_accounts (account_code, account_name, account_type, description) VALUES
--- Assets
-('1000', 'Cash', 'asset', 'Cash on hand and in bank'),
-('1100', 'Accounts Receivable', 'asset', 'Amounts owed by customers'),
-('1200', 'Inventory', 'asset', 'Merchandise inventory'),
-('1300', 'Prepaid Expenses', 'asset', 'Prepaid insurance, rent, etc.'),
-('1400', 'Fixed Assets', 'asset', 'Equipment, furniture, vehicles'),
-('1500', 'Accumulated Depreciation', 'asset', 'Accumulated depreciation on fixed assets'),
+-- Assets (type 1)
+('1000', 'Cash', 1, 'Cash on hand and in bank'),
+('1100', 'Accounts Receivable', 1, 'Amounts owed by customers'),
+('110000', 'Debtors Control Account', 1, 'Control account for customer receivables'),
+('1200', 'Inventory', 1, 'Merchandise inventory'),
+('1300', 'Prepaid Expenses', 1, 'Prepaid insurance, rent, etc.'),
+('1400', 'Fixed Assets', 1, 'Equipment, furniture, vehicles'),
+('1500', 'Accumulated Depreciation', 1, 'Accumulated depreciation on fixed assets'),
 
--- Liabilities
-('2000', 'Accounts Payable', 'liability', 'Amounts owed to suppliers'),
-('2100', 'Accrued Expenses', 'liability', 'Accrued wages, taxes, etc.'),
-('2200', 'Notes Payable', 'liability', 'Bank loans and notes'),
-('2300', 'Sales Tax Payable', 'liability', 'Sales tax collected'),
+-- Liabilities (type 2)
+('2000', 'Accounts Payable', 2, 'Amounts owed to suppliers'),
+('2100', 'Accrued Expenses', 2, 'Accrued wages, taxes, etc.'),
+('2200', 'Notes Payable', 2, 'Bank loans and notes'),
+('2300', 'Sales Tax Payable', 2, 'Sales tax collected'),
 
--- Equity
-('3000', 'Owner\'s Equity', 'equity', 'Owner\'s investment'),
-('3100', 'Retained Earnings', 'equity', 'Accumulated profits'),
-('3200', 'Owner\'s Draw', 'equity', 'Owner\'s withdrawals'),
+-- Equity (type 13)
+('3000', 'Owner\'s Equity', 13, 'Owner\'s investment'),
+('3100', 'Retained Earnings', 13, 'Accumulated profits'),
+('3200', 'Owner\'s Draw', 13, 'Owner\'s withdrawals'),
 
--- Revenue
-('4000', 'Sales Revenue', 'revenue', 'Revenue from sales'),
-('4100', 'Other Income', 'revenue', 'Interest, rent, etc.'),
+-- Revenue (type 4)
+('4000', 'Sales Revenue', 4, 'Revenue from sales'),
+('4100', 'Other Income', 4, 'Interest, rent, etc.'),
 
--- Expenses
-('5000', 'Cost of Goods Sold', 'expense', 'Cost of merchandise sold'),
-('5100', 'Advertising Expense', 'expense', 'Marketing and advertising costs'),
-('5200', 'Rent Expense', 'expense', 'Store and office rent'),
-('5300', 'Utilities Expense', 'expense', 'Electricity, water, internet'),
-('5400', 'Wages Expense', 'expense', 'Employee salaries and wages'),
-('5500', 'Insurance Expense', 'expense', 'Business insurance'),
-('5600', 'Office Supplies', 'expense', 'Office and store supplies'),
-('5700', 'Depreciation Expense', 'expense', 'Depreciation on fixed assets'),
-('5800', 'Miscellaneous Expense', 'expense', 'Other business expenses');
+-- Expenses (type 5)
+('5000', 'Cost of Goods Sold', 5, 'Cost of merchandise sold'),
+('5100', 'Advertising Expense', 5, 'Marketing and advertising costs'),
+('5200', 'Rent Expense', 5, 'Store and office rent'),
+('5300', 'Utilities Expense', 5, 'Electricity, water, internet'),
+('5400', 'Wages Expense', 5, 'Employee salaries and wages'),
+('5500', 'Insurance Expense', 5, 'Business insurance'),
+('5600', 'Office Supplies', 5, 'Office and store supplies'),
+('5800', 'Miscellaneous Expense', 5, 'Other business expenses'),
+
+-- Depreciation (type 17)
+('5700', 'Depreciation Expense', 17, 'Depreciation on fixed assets');
 
 -- Insert default admin user (password: admin123)
 INSERT INTO users (username, email, password_hash, full_name, role) VALUES
@@ -348,4 +351,127 @@ CREATE TABLE IF NOT EXISTS employee_warnings (
   issued_by VARCHAR(100),
   issued_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (staff_id) REFERENCES staff(id)
+); 
+
+-- Stock Takes (Physical Inventory Counts)
+CREATE TABLE IF NOT EXISTS stock_takes (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  store_id INT NOT NULL,
+  staff_id INT NOT NULL,
+  take_date DATE NOT NULL,
+  notes TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (store_id) REFERENCES stores(id),
+  FOREIGN KEY (staff_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS stock_take_items (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  stock_take_id INT NOT NULL,
+  product_id INT NOT NULL,
+  system_quantity INT NOT NULL,
+  counted_quantity INT NOT NULL,
+  difference INT NOT NULL,
+  FOREIGN KEY (stock_take_id) REFERENCES stock_takes(id),
+  FOREIGN KEY (product_id) REFERENCES products(id)
+); 
+
+-- Countries Table
+CREATE TABLE IF NOT EXISTS countries (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  name VARCHAR(100) NOT NULL
+);
+
+-- Regions Table
+CREATE TABLE IF NOT EXISTS regions (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  name VARCHAR(100) NOT NULL,
+  country_id INT,
+  FOREIGN KEY (country_id) REFERENCES countries(id)
+);
+
+-- Routes Table
+CREATE TABLE IF NOT EXISTS routes (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  name VARCHAR(100) NOT NULL
+); 
+
+-- Clients Table
+CREATE TABLE IF NOT EXISTS Clients (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  name VARCHAR(100) NOT NULL,
+  address TEXT,
+  email VARCHAR(100),
+  phone VARCHAR(20),
+  country_id INT,
+  region_id INT,
+  route_id INT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (country_id) REFERENCES countries(id),
+  FOREIGN KEY (region_id) REFERENCES regions(id),
+  FOREIGN KEY (route_id) REFERENCES routes(id)
+); 
+
+-- HR Calendar Tasks
+CREATE TABLE IF NOT EXISTS hr_calendar_tasks (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  date DATE NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  description TEXT,
+  status ENUM('Pending','In Progress','Completed') DEFAULT 'Pending',
+  assigned_to VARCHAR(100),
+  text TEXT
+); 
+
+-- Leave Requests Table
+CREATE TABLE IF NOT EXISTS leave_requests (
+    id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    employee_id INT(11) NOT NULL,
+    leave_type_id INT(11) NOT NULL,
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    is_half_day TINYINT(1) NOT NULL DEFAULT 0,
+    reason VARCHAR(255) DEFAULT NULL,
+    attachment_url VARCHAR(255) DEFAULT NULL,
+    status ENUM('pending','approved','rejected','cancelled') NOT NULL DEFAULT 'pending',
+    approved_by INT(11) DEFAULT NULL,
+    employee_type_id INT(11) NOT NULL DEFAULT 1,
+    notes TEXT DEFAULT NULL,
+    applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
+    KEY idx_employee_id (employee_id),
+    KEY idx_leave_type_id (leave_type_id),
+    KEY idx_start_date (start_date),
+    KEY idx_end_date (end_date),
+    KEY idx_status (status),
+    KEY idx_approved_by (approved_by),
+    KEY idx_created_at (created_at),
+    
+    CONSTRAINT fk_leave_requests_employee FOREIGN KEY (employee_id) REFERENCES staff(id),
+    CONSTRAINT fk_leave_requests_leave_type FOREIGN KEY (leave_type_id) REFERENCES leave_types(id)
+); 
+
+-- Visibility Report Table
+CREATE TABLE IF NOT EXISTS VisibilityReport (
+  id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  reportId INT(11) NOT NULL UNIQUE,
+  comment VARCHAR(191) DEFAULT NULL,
+  imageUrl VARCHAR(191) DEFAULT NULL,
+  createdAt DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  clientId INT(11) NOT NULL,
+  userId INT(11) NOT NULL
+); 
+
+-- My Visibility Report Table
+CREATE TABLE IF NOT EXISTS MyVisibilityReport (
+  id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  reportId INT(11) NOT NULL UNIQUE,
+  comment VARCHAR(191) DEFAULT NULL,
+  imageUrl VARCHAR(191) DEFAULT NULL,
+  createdAt DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  clientId INT(11) NOT NULL,
+  userId INT(11) NOT NULL
 ); 

@@ -7,7 +7,7 @@ const calendarTaskController = {
       const { month } = req.query; // e.g., '2024-06'
       if (!month) return res.status(400).json({ message: 'Month is required (YYYY-MM)' });
       const [rows] = await db.query(
-        'SELECT id, date, text FROM hr_calendar_tasks WHERE DATE_FORMAT(date, "%Y-%m") = ? ORDER BY date ASC, id ASC',
+        'SELECT id, date, title, description, status, assigned_to FROM hr_calendar_tasks WHERE DATE_FORMAT(date, "%Y-%m") = ? ORDER BY date ASC, id ASC',
         [month]
       );
       res.json(rows);
@@ -18,15 +18,30 @@ const calendarTaskController = {
   // Add a new task
   addTask: async (req, res) => {
     try {
-      const { date, text } = req.body;
-      if (!date || !text) return res.status(400).json({ message: 'Date and text are required' });
+      const { date, title, description, status, assigned_to } = req.body;
+      if (!date || !title) return res.status(400).json({ message: 'Date and title are required' });
       const [result] = await db.query(
-        'INSERT INTO hr_calendar_tasks (date, text) VALUES (?, ?)',
-        [date, text]
+        'INSERT INTO hr_calendar_tasks (date, title, description, status, assigned_to) VALUES (?, ?, ?, ?, ?)',
+        [date, title, description || '', status || 'Pending', assigned_to || null]
       );
-      res.status(201).json({ id: result.insertId, date, text });
+      res.status(201).json({ id: result.insertId, date, title, description, status: status || 'Pending', assigned_to });
     } catch (error) {
       res.status(500).json({ message: 'Failed to add task', error: error.message });
+    }
+  },
+  // Update a task
+  updateTask: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { date, title, description, status, assigned_to } = req.body;
+      const [result] = await db.query(
+        'UPDATE hr_calendar_tasks SET date=?, title=?, description=?, status=?, assigned_to=? WHERE id=?',
+        [date, title, description, status, assigned_to, id]
+      );
+      if (result.affectedRows === 0) return res.status(404).json({ message: 'Task not found' });
+      res.json({ id, date, title, description, status, assigned_to });
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to update task', error: error.message });
     }
   },
   // Delete a task

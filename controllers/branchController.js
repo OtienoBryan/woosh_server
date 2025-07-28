@@ -5,9 +5,9 @@ const branchController = {
     try {
       const [branches] = await db.query(`
         SELECT b.*, c.name as client_name 
-        FROM resident b
-        LEFT JOIN premises c ON b.premisesId = c.id
-        WHERE b.id = ?
+        FROM branches b
+        LEFT JOIN Clients c ON b.client_id = c.id
+        WHERE b.client_id = ?
         ORDER BY b.name
       `, [req.params.clientId]);
       res.json(branches);
@@ -20,7 +20,7 @@ const branchController = {
   getBranch: async (req, res) => {
     try {
       const [branches] = await db.query(
-        'SELECT * FROM resident WHERE id = ?',
+        'SELECT * FROM branches WHERE id = ?',
         [req.params.id]
       );
       

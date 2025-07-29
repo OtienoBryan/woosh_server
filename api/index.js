@@ -431,5 +431,27 @@ app.patch('/api/journey-plans/:id', journeyPlanController.updateJourneyPlan);
 app.delete('/api/journey-plans/:id', journeyPlanController.deleteJourneyPlan);
 
 
+// Test endpoint for debugging
+app.get('/api/health', async (req, res) => {
+  try {
+    // Test database connection
+    const [result] = await db.query('SELECT 1 as test');
+    res.json({ 
+      status: 'healthy', 
+      database: 'connected',
+      timestamp: new Date().toISOString(),
+      env: process.env.NODE_ENV || 'development'
+    });
+  } catch (error) {
+    console.error('Health check failed:', error);
+    res.status(500).json({ 
+      status: 'unhealthy', 
+      database: 'disconnected',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // For serverless deployment, just export the app
 module.exports = app; 

@@ -188,7 +188,7 @@ const staffController = {
       res.status(201).json({ message: 'Document uploaded', file_url: fileUrl });
     } catch (error) {
       console.error('Cloudinary upload error:', error);
-      res.status(500).json({ message: 'Failed to upload document', error });
+      res.status(500).json({ message: 'Failed to upload document', error: error.message });
     }
   },
   getDocuments: async (req, res) => {
@@ -213,34 +213,107 @@ const staffController = {
   },
   // Employee Contracts
   uploadContract: async (req, res) => {
+    console.log('=== Contract Upload Started ===');
+    console.log('Request params:', req.params);
+    console.log('Request body:', req.body);
+    console.log('Request file:', req.file);
+    
     const staffId = req.params.id;
-    if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
+    console.log('Staff ID:', staffId);
+    
+    if (!req.file) {
+      console.log('No file uploaded');
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+    
     const { originalname, path: filePath } = req.file;
     const { start_date, end_date, renewed_from } = req.body;
+    
+    console.log('File details:', { originalname, path: filePath });
+    console.log('Form data:', { start_date, end_date, renewed_from });
+    
     try {
-      const result = await cloudinary.uploader.upload(filePath, {
-        folder: 'employee_contracts',
-        resource_type: 'auto',
-        public_id: `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_'),
-      });
-      const fileUrl = result.secure_url;
-      await db.query(
+      // Check if Cloudinary is properly configured
+      const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+      const apiKey = process.env.CLOUDINARY_API_KEY;
+      const apiSecret = process.env.CLOUDINARY_API_SECRET;
+      
+      console.log('Cloudinary config check:');
+      console.log('- Cloud name:', cloudName ? 'SET' : 'NOT SET');
+      console.log('- API key:', apiKey ? 'SET' : 'NOT SET');
+      console.log('- API secret:', apiSecret ? 'SET' : 'NOT SET');
+      
+      let fileUrl;
+      
+      if (cloudName && apiKey && apiSecret) {
+        // Use Cloudinary if properly configured
+        console.log('Using Cloudinary upload...');
+        const result = await cloudinary.uploader.upload(filePath, {
+          folder: 'employee_contracts',
+          resource_type: 'auto',
+          public_id: `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_'),
+        });
+        
+        console.log('Cloudinary upload successful:', result);
+        fileUrl = result.secure_url;
+        
+        // Clean up local file after Cloudinary upload
+        fs.unlink(filePath, (err) => {
+          if (err) console.log('Error deleting local file:', err);
+          else console.log('Local file deleted successfully');
+        });
+      } else {
+        // Use local storage if Cloudinary not configured
+        console.log('Cloudinary not configured, using local storage...');
+        const fileName = `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_');
+        const uploadDir = path.join(__dirname, '..', 'uploads', 'contracts');
+        
+        // Create uploads directory if it doesn't exist
+        if (!fs.existsSync(uploadDir)) {
+          fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        
+        const newFilePath = path.join(uploadDir, fileName);
+        fs.copyFileSync(filePath, newFilePath);
+        
+        fileUrl = `/uploads/contracts/${fileName}`;
+        console.log('Local file saved:', fileUrl);
+      }
+      
+      console.log('Saving to database...');
+      const [dbResult] = await db.query(
         'INSERT INTO employee_contracts (staff_id, file_name, file_url, start_date, end_date, renewed_from) VALUES (?, ?, ?, ?, ?, ?)',
         [staffId, originalname, fileUrl, start_date, end_date, renewed_from || null]
       );
-      fs.unlink(filePath, () => {});
+      console.log('Database insert successful:', dbResult);
+      
+      console.log('=== Contract Upload Completed Successfully ===');
       res.status(201).json({ message: 'Contract uploaded', file_url: fileUrl });
     } catch (error) {
-      res.status(500).json({ message: 'Failed to upload contract', error });
+      console.error('=== Contract Upload Failed ===');
+      console.error('Error details:', error);
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
+      res.status(500).json({ message: 'Failed to upload contract', error: error.message });
     }
   },
 
   getContracts: async (req, res) => {
+    console.log('=== Fetching Contracts ===');
+    console.log('Request params:', req.params);
+    
     const staffId = req.params.id;
+    console.log('Staff ID:', staffId);
+    
     try {
+      console.log('Executing database query...');
       const [contracts] = await db.query('SELECT * FROM employee_contracts WHERE staff_id = ? ORDER BY end_date DESC', [staffId]);
+      console.log('Contracts found:', contracts.length);
+      console.log('Contracts data:', contracts);
       res.json(contracts);
     } catch (error) {
+      console.error('=== Failed to fetch contracts ===');
+      console.error('Error:', error);
       res.status(500).json({ message: 'Failed to fetch contracts', error: error.message });
     }
   },
@@ -262,6 +335,235 @@ const staffController = {
       res.json(contracts);
     } catch (error) {
       res.status(500).json({ message: 'Failed to fetch expiring contracts', error: error.message });
+    }
+  },
+
+  // Termination Letters
+  uploadTerminationLetter: async (req, res) => {
+    console.log('=== Termination Letter Upload Started ===');
+    console.log('Request params:', req.params);
+    console.log('Request body:', req.body);
+    console.log('Request file:', req.file);
+    
+    const staffId = req.params.id;
+    console.log('Staff ID:', staffId);
+    
+    if (!req.file) {
+      console.log('No file uploaded');
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+    
+    const { originalname, path: filePath } = req.file;
+    const { termination_date } = req.body;
+    
+    console.log('File details:', { originalname, path: filePath });
+    console.log('Form data:', { termination_date });
+    
+    if (!termination_date) {
+      console.log('No termination date provided');
+      return res.status(400).json({ message: 'Termination date is required' });
+    }
+    
+    try {
+      // Check if Cloudinary is properly configured
+      const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+      const apiKey = process.env.CLOUDINARY_API_KEY;
+      const apiSecret = process.env.CLOUDINARY_API_SECRET;
+      
+      console.log('Cloudinary config check:');
+      console.log('- Cloud name:', cloudName ? 'SET' : 'NOT SET');
+      console.log('- API key:', apiKey ? 'SET' : 'NOT SET');
+      console.log('- API secret:', apiSecret ? 'SET' : 'NOT SET');
+      
+      let fileUrl;
+      
+      if (cloudName && apiKey && apiSecret) {
+        // Use Cloudinary if properly configured
+        console.log('Using Cloudinary upload...');
+        const result = await cloudinary.uploader.upload(filePath, {
+          folder: 'termination_letters',
+          resource_type: 'auto',
+          public_id: `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_'),
+        });
+        
+        console.log('Cloudinary upload successful:', result);
+        fileUrl = result.secure_url;
+        
+        // Clean up local file after Cloudinary upload
+        fs.unlink(filePath, (err) => {
+          if (err) console.log('Error deleting local file:', err);
+          else console.log('Local file deleted successfully');
+        });
+      } else {
+        // Use local storage if Cloudinary not configured
+        console.log('Cloudinary not configured, using local storage...');
+        const fileName = `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_');
+        const uploadDir = path.join(__dirname, '..', 'uploads', 'termination_letters');
+        
+        // Create uploads directory if it doesn't exist
+        if (!fs.existsSync(uploadDir)) {
+          fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        
+        const newFilePath = path.join(uploadDir, fileName);
+        fs.copyFileSync(filePath, newFilePath);
+        
+        fileUrl = `/uploads/termination_letters/${fileName}`;
+        console.log('Local file saved:', fileUrl);
+      }
+      
+      console.log('Saving to database...');
+      const [dbResult] = await db.query(
+        'INSERT INTO termination_letters (staff_id, file_name, file_url, termination_date) VALUES (?, ?, ?, ?)',
+        [staffId, originalname, fileUrl, termination_date]
+      );
+      console.log('Database insert successful:', dbResult);
+      
+      // Update employee status to inactive
+      console.log('Updating employee status to inactive...');
+      await db.query('UPDATE staff SET is_active = 0 WHERE id = ?', [staffId]);
+      console.log('Employee status updated successfully');
+      
+      console.log('=== Termination Letter Upload Completed Successfully ===');
+      res.status(201).json({ message: 'Termination letter uploaded and employee deactivated', file_url: fileUrl });
+    } catch (error) {
+      console.error('=== Termination Letter Upload Failed ===');
+      console.error('Error details:', error);
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
+      res.status(500).json({ message: 'Failed to upload termination letter', error: error.message });
+    }
+  },
+
+  getTerminationLetters: async (req, res) => {
+    console.log('=== Fetching Termination Letters ===');
+    console.log('Request params:', req.params);
+    
+    const staffId = req.params.id;
+    console.log('Staff ID:', staffId);
+    
+    try {
+      console.log('Executing database query...');
+      const [letters] = await db.query('SELECT * FROM termination_letters WHERE staff_id = ? ORDER BY uploaded_at DESC', [staffId]);
+      console.log('Termination letters found:', letters.length);
+      console.log('Termination letters data:', letters);
+      res.json(letters);
+    } catch (error) {
+      console.error('=== Failed to fetch termination letters ===');
+      console.error('Error:', error);
+      res.status(500).json({ message: 'Failed to fetch termination letters', error: error.message });
+    }
+  },
+
+  // Warning Letters
+  uploadWarningLetter: async (req, res) => {
+    console.log('=== Warning Letter Upload Started ===');
+    console.log('Request params:', req.params);
+    console.log('Request body:', req.body);
+    console.log('Request file:', req.file);
+    
+    const staffId = req.params.id;
+    console.log('Staff ID:', staffId);
+    
+    if (!req.file) {
+      console.log('No file uploaded');
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+    
+    const { originalname, path: filePath } = req.file;
+    const { warning_date, warning_type, description } = req.body;
+    
+    console.log('File details:', { originalname, path: filePath });
+    console.log('Form data:', { warning_date, warning_type, description });
+    
+    if (!warning_date || !warning_type) {
+      console.log('Missing required fields');
+      return res.status(400).json({ message: 'Warning date and type are required' });
+    }
+    
+    try {
+      // Check if Cloudinary is properly configured
+      const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+      const apiKey = process.env.CLOUDINARY_API_KEY;
+      const apiSecret = process.env.CLOUDINARY_API_SECRET;
+      
+      console.log('Cloudinary config check:');
+      console.log('- Cloud name:', cloudName ? 'SET' : 'NOT SET');
+      console.log('- API key:', apiKey ? 'SET' : 'NOT SET');
+      console.log('- API secret:', apiSecret ? 'SET' : 'NOT SET');
+      
+      let fileUrl;
+      
+      if (cloudName && apiKey && apiSecret) {
+        // Use Cloudinary if properly configured
+        console.log('Using Cloudinary upload...');
+        const result = await cloudinary.uploader.upload(filePath, {
+          folder: 'warning_letters',
+          resource_type: 'auto',
+          public_id: `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_'),
+        });
+        
+        console.log('Cloudinary upload successful:', result);
+        fileUrl = result.secure_url;
+        
+        // Clean up local file after Cloudinary upload
+        fs.unlink(filePath, (err) => {
+          if (err) console.log('Error deleting local file:', err);
+          else console.log('Local file deleted successfully');
+        });
+      } else {
+        // Use local storage if Cloudinary not configured
+        console.log('Cloudinary not configured, using local storage...');
+        const fileName = `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_');
+        const uploadDir = path.join(__dirname, '..', 'uploads', 'warning_letters');
+        
+        // Create uploads directory if it doesn't exist
+        if (!fs.existsSync(uploadDir)) {
+          fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        
+        const newFilePath = path.join(uploadDir, fileName);
+        fs.copyFileSync(filePath, newFilePath);
+        
+        fileUrl = `/uploads/warning_letters/${fileName}`;
+        console.log('Local file saved:', fileUrl);
+      }
+      
+      console.log('Saving to database...');
+      const [dbResult] = await db.query(
+        'INSERT INTO warning_letters (staff_id, file_name, file_url, warning_date, warning_type, description) VALUES (?, ?, ?, ?, ?, ?)',
+        [staffId, originalname, fileUrl, warning_date, warning_type, description || null]
+      );
+      console.log('Database insert successful:', dbResult);
+      
+      console.log('=== Warning Letter Upload Completed Successfully ===');
+      res.status(201).json({ message: 'Warning letter uploaded successfully', file_url: fileUrl });
+    } catch (error) {
+      console.error('=== Warning Letter Upload Failed ===');
+      console.error('Error details:', error);
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
+      res.status(500).json({ message: 'Failed to upload warning letter', error: error.message });
+    }
+  },
+
+  getWarningLetters: async (req, res) => {
+    console.log('=== Fetching Warning Letters ===');
+    console.log('Request params:', req.params);
+    
+    const staffId = req.params.id;
+    console.log('Staff ID:', staffId);
+    
+    try {
+      console.log('Executing database query...');
+      const [letters] = await db.query('SELECT * FROM warning_letters WHERE staff_id = ? ORDER BY warning_date DESC', [staffId]);
+      console.log('Warning letters found:', letters.length);
+      console.log('Warning letters data:', letters);
+      res.json(letters);
+    } catch (error) {
+      console.error('=== Failed to fetch warning letters ===');
+      console.error('Error:', error);
+      res.status(500).json({ message: 'Failed to fetch warning letters', error: error.message });
     }
   },
   // Employee Warnings

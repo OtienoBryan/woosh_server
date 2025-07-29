@@ -45,7 +45,7 @@ async function addStockRole() {
       'stock@company.com',
       'inventory@company.com',
       45000.00,
-      'Permanent',
+      'Consultant',
       hashedPassword
     ]);
 

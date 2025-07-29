@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const path = require('path');
 const db = require('./database/db');
 const staffController = require('./controllers/staffController');
 const roleController = require('./controllers/roleController');
@@ -53,6 +54,12 @@ app.use('/api/riders', riderRoutes);
 
 // Middleware
 app.use(express.json());
+
+// Serve static files from uploads directory
+app.use('/uploads', express.static('uploads'));
+app.use('/uploads/contracts', express.static(path.join(__dirname, 'uploads', 'contracts')));
+app.use('/uploads/termination_letters', express.static(path.join(__dirname, 'uploads', 'termination_letters')));
+app.use('/uploads/warning_letters', express.static(path.join(__dirname, 'uploads', 'warning_letters')));
 
 // Register all specific endpoints FIRST
 app.use('/api/my-visibility-reports', myVisibilityReportRoutes);

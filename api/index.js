@@ -20,8 +20,7 @@ const riderRoutes = require('../routes/riderRoutes');
 const financialRoutes = require('../routes/financialRoutes');
 const staffRoutes = require('../routes/staffRoutes');
 const chatRoutes = require('../routes/chatRoutes');
-const http = require('http');
-const { Server } = require('socket.io');
+
 require('dotenv').config();
 const cloudinary = require('../config/cloudinary');
 const visibilityReportController = require('../controllers/visibilityReportController');
@@ -391,48 +390,8 @@ app.use((err, req, res, next) => {
   res.status(500).json({ message: 'Something went wrong!' });
 });
 
-const server = http.createServer(app);
-const io = new Server(server, {
-  cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
-    methods: ['GET', 'POST'],
-    credentials: true
-  }
-});
-
-// Socket.IO chat logic
-io.on('connection', (socket) => {
-  // Join a chat room
-  socket.on('joinRoom', (roomId) => {
-    socket.join(`room_${roomId}`);
-  });
-
-  // Leave a chat room
-  socket.on('leaveRoom', (roomId) => {
-    socket.leave(`room_${roomId}`);
-  });
-
-  // Handle sending a message
-  socket.on('sendMessage', async (data) => {
-    // data: { roomId, message, sender_id, sender_name, sentAt }
-    try {
-      // Save to database
-      const [result] = await db.query(
-        'INSERT INTO chat_messages (room_id, sender_id, message) VALUES (?, ?, ?)',
-        [data.roomId, data.sender_id, data.message]
-      );
-      // Fetch the saved message with sender_name and sent_at
-      const [rows] = await db.query(
-        `SELECT m.*, s.name as sender_name FROM chat_messages m JOIN staff s ON m.sender_id = s.id WHERE m.id = ?`,
-        [result.insertId]
-      );
-      const savedMsg = rows[0];
-      io.to(`room_${data.roomId}`).emit('newMessage', savedMsg);
-    } catch (err) {
-      console.error('Socket sendMessage error:', err);
-    }
-  });
-});
+// Note: Socket.IO functionality is not available in serverless environment
+// For real-time features, consider using external services like Pusher or Socket.io Cloud
 
 // Register all specific endpoints FIRST
 app.get('/api/countries', async (req, res) => {
@@ -472,9 +431,5 @@ app.patch('/api/journey-plans/:id', journeyPlanController.updateJourneyPlan);
 app.delete('/api/journey-plans/:id', journeyPlanController.deleteJourneyPlan);
 
 
-const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
-
+// For serverless deployment, just export the app
 module.exports = app; 

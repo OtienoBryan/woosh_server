@@ -35,7 +35,8 @@ const {
   getSalesReps,
   getAllAssetsWithDepreciation,
   getAssetsTotalValue,
-  getAllExpenses
+  getAllExpenses,
+  createJournalEntry
 } = require('../controllers/financialController');
 const purchaseOrderController = require('../controllers/purchaseOrderController');
 const storeController = require('../controllers/storeController');
@@ -163,6 +164,7 @@ router.post('/equity-entries/bulk', addBulkEquityEntries);
 
 // Journal entries route
 router.get('/journal-entries', reportsController.listJournalEntries);
+router.post('/journal-entries', createJournalEntry);
 
 // General Ledger Report
 router.get('/general-ledger', reportsController.getGeneralLedger);

@@ -341,6 +341,30 @@ CREATE TABLE IF NOT EXISTS employee_contracts (
   renewed_from INT DEFAULT NULL,
   FOREIGN KEY (staff_id) REFERENCES staff(id),
   FOREIGN KEY (renewed_from) REFERENCES employee_contracts(id)
+);
+
+-- Termination Letters
+CREATE TABLE IF NOT EXISTS termination_letters (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  staff_id INT NOT NULL,
+  file_name VARCHAR(255) NOT NULL,
+  file_url VARCHAR(500) NOT NULL,
+  termination_date DATE NOT NULL,
+  uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (staff_id) REFERENCES staff(id)
+);
+
+-- Warning Letters
+CREATE TABLE IF NOT EXISTS warning_letters (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  staff_id INT NOT NULL,
+  file_name VARCHAR(255) NOT NULL,
+  file_url VARCHAR(500) NOT NULL,
+  warning_date DATE NOT NULL,
+  warning_type VARCHAR(50) NOT NULL,
+  description TEXT,
+  uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (staff_id) REFERENCES staff(id)
 ); 
 
 -- Employee Warnings

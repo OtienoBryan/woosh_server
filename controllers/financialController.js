@@ -1535,6 +1535,90 @@ const getAllExpenses = async (req, res) => {
   }
 };
 
+// Create journal entry
+const createJournalEntry = async (req, res) => {
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    
+    const { entry_date, reference, description, lines } = req.body;
+    
+    if (!entry_date || !reference || !description || !lines || !Array.isArray(lines) || lines.length < 2) {
+      return res.status(400).json({ success: false, error: 'Missing required fields or invalid lines' });
+    }
+    
+    // Validate that debits equal credits
+    const totalDebit = lines.reduce((sum, line) => sum + (line.debit_amount || 0), 0);
+    const totalCredit = lines.reduce((sum, line) => sum + (line.credit_amount || 0), 0);
+    
+    if (Math.abs(totalDebit - totalCredit) > 0.01) {
+      return res.status(400).json({ 
+        success: false, 
+        error: `Debits (${totalDebit.toFixed(2)}) must equal credits (${totalCredit.toFixed(2)})` 
+      });
+    }
+    
+    // Validate each line
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.account_id) {
+        return res.status(400).json({ success: false, error: `Line ${i + 1}: Account is required` });
+      }
+      if (line.debit_amount === 0 && line.credit_amount === 0) {
+        return res.status(400).json({ success: false, error: `Line ${i + 1}: Either debit or credit amount must be greater than 0` });
+      }
+      if (line.debit_amount > 0 && line.credit_amount > 0) {
+        return res.status(400).json({ success: false, error: `Line ${i + 1}: Cannot have both debit and credit amounts` });
+      }
+    }
+    
+    // Generate entry number
+    const entryNumber = `JE-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Create journal entry
+    const [journalResult] = await connection.query(
+      `INSERT INTO journal_entries (entry_number, entry_date, reference, description, total_debit, total_credit, status, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, 'posted', ?)`,
+      [entryNumber, entry_date, reference, description, totalDebit, totalCredit, 1]
+    );
+    
+    const journalEntryId = journalResult.insertId;
+    
+    // Create journal entry lines
+    for (const line of lines) {
+      await connection.query(
+        `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+         VALUES (?, ?, ?, ?, ?)`,
+        [journalEntryId, line.account_id, line.debit_amount || 0, line.credit_amount || 0, line.description || '']
+      );
+    }
+    
+    await connection.commit();
+    
+    res.status(201).json({ 
+      success: true, 
+      message: 'Journal entry created successfully',
+      data: {
+        id: journalEntryId,
+        entry_number: entryNumber,
+        entry_date,
+        reference,
+        description,
+        total_debit: totalDebit,
+        total_credit: totalCredit,
+        lines_count: lines.length
+      }
+    });
+    
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error creating journal entry:', error);
+    res.status(500).json({ success: false, error: 'Failed to create journal entry' });
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   chartOfAccountsController,
   suppliersController,
@@ -1572,4 +1656,5 @@ module.exports = {
   getSalesReps,
   getAssetsTotalValue,
   getAllExpenses,
+  createJournalEntry,
 }; 

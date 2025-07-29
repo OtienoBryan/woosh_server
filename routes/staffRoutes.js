@@ -35,6 +35,14 @@ router.get('/staff/:id/contracts', staffController.getContracts);
 router.post('/staff/contracts/:contractId/renew', upload.single('file'), staffController.renewContract);
 router.get('/staff/contracts/expiring', staffController.getExpiringContracts);
 
+// Termination Letters
+router.post('/staff/:id/termination-letters', upload.single('file'), staffController.uploadTerminationLetter);
+router.get('/staff/:id/termination-letters', staffController.getTerminationLetters);
+
+// Warning Letters
+router.post('/staff/:id/warning-letters', upload.single('file'), staffController.uploadWarningLetter);
+router.get('/staff/:id/warning-letters', staffController.getWarningLetters);
+
 // Employee warning routes
 router.post('/staff/:id/warnings', staffController.postWarning);
 router.get('/staff/:id/warnings', staffController.getWarnings);

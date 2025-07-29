@@ -412,9 +412,7 @@ app.get('/api/health', async (req, res) => {
         origin: req.headers.origin,
         frontendUrl: process.env.FRONTEND_URL,
         allowedOrigins: [
-          'https://woosh-client.vercel.app',
-          'http://localhost:5173',
-          'http://localhost:3000'
+          'https://woosh-client.vercel.app'
         ]
       }
     });
@@ -436,9 +434,7 @@ app.get('/api/cors-test', (req, res) => {
     origin: req.headers.origin,
     timestamp: new Date().toISOString(),
     allowedOrigins: [
-      'https://woosh-client.vercel.app',
-      'http://localhost:5173',
-      'http://localhost:3000'
+      'https://woosh-client.vercel.app'
     ]
   });
 });

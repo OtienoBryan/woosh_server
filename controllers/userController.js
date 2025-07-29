@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 const multer = require('multer');
 const cloudinary = require('../config/cloudinary');
 
-const upload = multer({ dest: 'uploads/' });
+const upload = multer({ storage: multer.memoryStorage() });
 
 exports.uploadAvatarMiddleware = upload.single('avatar');
 
@@ -11,8 +11,12 @@ exports.uploadAvatar = async (req, res) => {
   const { id } = req.params;
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
+    // Convert buffer to base64 for Cloudinary
+    const b64 = Buffer.from(req.file.buffer).toString('base64');
+    const dataURI = `data:${req.file.mimetype};base64,${b64}`;
+    
     // Upload to Cloudinary
-    const result = await cloudinary.uploader.upload(req.file.path, {
+    const result = await cloudinary.uploader.upload(dataURI, {
       folder: 'avatars',
       resource_type: 'image',
     });

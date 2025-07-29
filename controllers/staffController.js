@@ -183,8 +183,7 @@ const staffController = {
         'INSERT INTO employee_documents (staff_id, file_name, file_url, description) VALUES (?, ?, ?, ?)',
         [staffId, originalname, fileUrl, description || null]
       );
-      // Optionally delete local file
-      fs.unlink(filePath, () => {});
+
       res.status(201).json({ message: 'Document uploaded', file_url: fileUrl });
     } catch (error) {
       console.error('Cloudinary upload error:', error);
@@ -226,7 +225,7 @@ const staffController = {
       return res.status(400).json({ message: 'No file uploaded' });
     }
     
-    const { originalname, path: filePath } = req.file;
+    const { originalname, buffer, mimetype } = req.file;
     const { start_date, end_date, renewed_from } = req.body;
     
     console.log('File details:', { originalname, path: filePath });
@@ -245,40 +244,21 @@ const staffController = {
       
       let fileUrl;
       
-      if (cloudName && apiKey && apiSecret) {
-        // Use Cloudinary if properly configured
-        console.log('Using Cloudinary upload...');
-        const result = await cloudinary.uploader.upload(filePath, {
-          folder: 'employee_contracts',
-          resource_type: 'auto',
-          public_id: `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_'),
-        });
-        
-        console.log('Cloudinary upload successful:', result);
-        fileUrl = result.secure_url;
-        
-        // Clean up local file after Cloudinary upload
-        fs.unlink(filePath, (err) => {
-          if (err) console.log('Error deleting local file:', err);
-          else console.log('Local file deleted successfully');
-        });
-      } else {
-        // Use local storage if Cloudinary not configured
-        console.log('Cloudinary not configured, using local storage...');
-        const fileName = `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_');
-        const uploadDir = path.join(__dirname, '..', 'uploads', 'contracts');
-        
-        // Create uploads directory if it doesn't exist
-        if (!fs.existsSync(uploadDir)) {
-          fs.mkdirSync(uploadDir, { recursive: true });
-        }
-        
-        const newFilePath = path.join(uploadDir, fileName);
-        fs.copyFileSync(filePath, newFilePath);
-        
-        fileUrl = `/uploads/contracts/${fileName}`;
-        console.log('Local file saved:', fileUrl);
-      }
+      // Convert buffer to base64 for Cloudinary
+      const b64 = Buffer.from(buffer).toString('base64');
+      const dataURI = `data:${mimetype};base64,${b64}`;
+      
+      // Upload to Cloudinary
+      console.log('Using Cloudinary upload...');
+      const result = await cloudinary.uploader.upload(dataURI, {
+        folder: 'employee_contracts',
+        resource_type: 'auto',
+        public_id: `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_'),
+      });
+      
+      console.log('Cloudinary upload successful:', result);
+      fileUrl = result.secure_url;
+      console.log('Cloudinary upload successful:', result);
       
       console.log('Saving to database...');
       const [dbResult] = await db.query(
@@ -353,7 +333,7 @@ const staffController = {
       return res.status(400).json({ message: 'No file uploaded' });
     }
     
-    const { originalname, path: filePath } = req.file;
+    const { originalname, buffer, mimetype } = req.file;
     const { termination_date } = req.body;
     
     console.log('File details:', { originalname, path: filePath });
@@ -377,40 +357,20 @@ const staffController = {
       
       let fileUrl;
       
-      if (cloudName && apiKey && apiSecret) {
-        // Use Cloudinary if properly configured
-        console.log('Using Cloudinary upload...');
-        const result = await cloudinary.uploader.upload(filePath, {
-          folder: 'termination_letters',
-          resource_type: 'auto',
-          public_id: `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_'),
-        });
-        
-        console.log('Cloudinary upload successful:', result);
-        fileUrl = result.secure_url;
-        
-        // Clean up local file after Cloudinary upload
-        fs.unlink(filePath, (err) => {
-          if (err) console.log('Error deleting local file:', err);
-          else console.log('Local file deleted successfully');
-        });
-      } else {
-        // Use local storage if Cloudinary not configured
-        console.log('Cloudinary not configured, using local storage...');
-        const fileName = `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_');
-        const uploadDir = path.join(__dirname, '..', 'uploads', 'termination_letters');
-        
-        // Create uploads directory if it doesn't exist
-        if (!fs.existsSync(uploadDir)) {
-          fs.mkdirSync(uploadDir, { recursive: true });
-        }
-        
-        const newFilePath = path.join(uploadDir, fileName);
-        fs.copyFileSync(filePath, newFilePath);
-        
-        fileUrl = `/uploads/termination_letters/${fileName}`;
-        console.log('Local file saved:', fileUrl);
-      }
+      // Convert buffer to base64 for Cloudinary
+      const b64 = Buffer.from(buffer).toString('base64');
+      const dataURI = `data:${mimetype};base64,${b64}`;
+      
+      // Upload to Cloudinary
+      console.log('Using Cloudinary upload...');
+      const result = await cloudinary.uploader.upload(dataURI, {
+        folder: 'termination_letters',
+        resource_type: 'auto',
+        public_id: `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_'),
+      });
+      
+      console.log('Cloudinary upload successful:', result);
+      fileUrl = result.secure_url;
       
       console.log('Saving to database...');
       const [dbResult] = await db.query(
@@ -470,7 +430,7 @@ const staffController = {
       return res.status(400).json({ message: 'No file uploaded' });
     }
     
-    const { originalname, path: filePath } = req.file;
+    const { originalname, buffer, mimetype } = req.file;
     const { warning_date, warning_type, description } = req.body;
     
     console.log('File details:', { originalname, path: filePath });
@@ -494,40 +454,20 @@ const staffController = {
       
       let fileUrl;
       
-      if (cloudName && apiKey && apiSecret) {
-        // Use Cloudinary if properly configured
-        console.log('Using Cloudinary upload...');
-        const result = await cloudinary.uploader.upload(filePath, {
-          folder: 'warning_letters',
-          resource_type: 'auto',
-          public_id: `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_'),
-        });
-        
-        console.log('Cloudinary upload successful:', result);
-        fileUrl = result.secure_url;
-        
-        // Clean up local file after Cloudinary upload
-        fs.unlink(filePath, (err) => {
-          if (err) console.log('Error deleting local file:', err);
-          else console.log('Local file deleted successfully');
-        });
-      } else {
-        // Use local storage if Cloudinary not configured
-        console.log('Cloudinary not configured, using local storage...');
-        const fileName = `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_');
-        const uploadDir = path.join(__dirname, '..', 'uploads', 'warning_letters');
-        
-        // Create uploads directory if it doesn't exist
-        if (!fs.existsSync(uploadDir)) {
-          fs.mkdirSync(uploadDir, { recursive: true });
-        }
-        
-        const newFilePath = path.join(uploadDir, fileName);
-        fs.copyFileSync(filePath, newFilePath);
-        
-        fileUrl = `/uploads/warning_letters/${fileName}`;
-        console.log('Local file saved:', fileUrl);
-      }
+      // Convert buffer to base64 for Cloudinary
+      const b64 = Buffer.from(buffer).toString('base64');
+      const dataURI = `data:${mimetype};base64,${b64}`;
+      
+      // Upload to Cloudinary
+      console.log('Using Cloudinary upload...');
+      const result = await cloudinary.uploader.upload(dataURI, {
+        folder: 'warning_letters',
+        resource_type: 'auto',
+        public_id: `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_'),
+      });
+      
+      console.log('Cloudinary upload successful:', result);
+      fileUrl = result.secure_url;
       
       console.log('Saving to database...');
       const [dbResult] = await db.query(

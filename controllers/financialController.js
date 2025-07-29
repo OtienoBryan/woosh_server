@@ -1335,34 +1335,26 @@ const deleteCategoryPriceOption = async (req, res) => {
   }
 };
 
-// Multer setup for product images
-const productImageStorage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const dir = path.join(__dirname, '../../uploads/products');
-    fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
-  },
-  filename: function (req, file, cb) {
-    const ext = path.extname(file.originalname);
-    cb(null, `product_${req.params.id}_${Date.now()}${ext}`);
-  }
-});
-const uploadProductImageMulter = multer({ storage: productImageStorage });
+// Multer setup for product images (serverless compatible)
+const uploadProductImageMulter = multer({ storage: multer.memoryStorage() });
 
 // Upload product image controller (Cloudinary)
 const uploadProductImage = async (req, res) => {
   if (!req.file) return res.status(400).json({ success: false, error: 'No file uploaded' });
   const productId = req.params.id;
   try {
+    // Convert buffer to base64 for Cloudinary
+    const b64 = Buffer.from(req.file.buffer).toString('base64');
+    const dataURI = `data:${req.file.mimetype};base64,${b64}`;
+    
     // Upload to Cloudinary
-    const result = await cloudinary.uploader.upload(req.file.path, {
+    const result = await cloudinary.uploader.upload(dataURI, {
       folder: 'products',
       public_id: `product_${productId}_${Date.now()}`,
       resource_type: 'image',
     });
     const imageUrl = result.secure_url;
     await db.query('UPDATE products SET image_url = ? WHERE id = ?', [imageUrl, productId]);
-    require('fs').unlink(req.file.path, () => {});
     res.json({ success: true, url: imageUrl });
   } catch (error) {
     console.error('Cloudinary upload error:', error);
@@ -1379,14 +1371,17 @@ const createProduct = async (req, res) => {
     }
     let imageUrl = null;
     if (req.file) {
+      // Convert buffer to base64 for Cloudinary
+      const b64 = Buffer.from(req.file.buffer).toString('base64');
+      const dataURI = `data:${req.file.mimetype};base64,${b64}`;
+      
       // Upload to Cloudinary
-      const result = await cloudinary.uploader.upload(req.file.path, {
+      const result = await cloudinary.uploader.upload(dataURI, {
         folder: 'products',
         public_id: `product_${product_code}_${Date.now()}`,
         resource_type: 'image',
       });
       imageUrl = result.secure_url;
-      require('fs').unlink(req.file.path, () => {});
     }
     // Get category name for denormalized field
     let categoryName = '';

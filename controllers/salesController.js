@@ -1,7 +1,7 @@
 const db = require('../database/db');
 const multer = require('multer');
 const cloudinary = require('../config/cloudinary');
-const upload = multer({ dest: 'uploads/' });
+const upload = multer({ storage: multer.memoryStorage() });
 
 // Get all countries
 exports.getAllCountries = async (req, res) => {
@@ -140,7 +140,11 @@ exports.uploadSalesRepPhoto = [
       if (!req.file) {
         return res.status(400).json({ error: 'No file uploaded' });
       }
-      const result = await cloudinary.uploader.upload(req.file.path, {
+      // Convert buffer to base64 for Cloudinary
+      const b64 = Buffer.from(req.file.buffer).toString('base64');
+      const dataURI = `data:${req.file.mimetype};base64,${b64}`;
+      
+      const result = await cloudinary.uploader.upload(dataURI, {
         folder: 'sales_reps',
         resource_type: 'image',
       });

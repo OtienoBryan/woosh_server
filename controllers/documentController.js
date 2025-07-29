@@ -25,7 +25,7 @@ const documentController = {
         [title, category, fileUrl, description || null]
       );
       // Delete local file
-      fs.unlink(filePath, () => {});
+
       res.status(201).json({ message: 'Document uploaded', file_url: fileUrl });
     } catch (error) {
       res.status(500).json({ message: 'Failed to upload document', error: error.message });

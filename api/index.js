@@ -390,65 +390,6 @@ app.use((err, req, res, next) => {
   res.status(500).json({ message: 'Something went wrong!' });
 });
 
-// Catch-all route for unmatched paths
-app.use('*', (req, res) => {
-  res.status(404).json({ 
-    message: 'Endpoint not found',
-    path: req.originalUrl,
-    method: req.method,
-    availableEndpoints: {
-      root: '/',
-      health: '/api/health',
-      test: '/api/test',
-      auth: '/api/auth/login',
-      staff: '/api/staff',
-      clients: '/api/clients',
-      financial: '/api/financial'
-    }
-  });
-});
-
-// Note: Socket.IO functionality is not available in serverless environment
-// For real-time features, consider using external services like Pusher or Socket.io Cloud
-
-// Register all specific endpoints FIRST
-app.get('/api/countries', async (req, res) => {
-  try {
-    const [countries] = await db.query('SELECT id, name FROM Country ORDER BY name');
-    res.json({ success: true, data: countries });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-
-// Team routes
-app.post('/api/teams', teamController.createTeam);
-app.get('/api/teams', teamController.getTeams);
-
-// Client routes
-app.get('/api/clients', clientController.getAllClients);
-app.get('/api/clients/:id', clientController.getClient);
-app.post('/api/clients', clientController.createClient);
-app.put('/api/clients/:id', clientController.updateClient);
-app.delete('/api/clients/:id', clientController.deleteClient);
-app.get('/api/clients/:clientId/branches', branchController.getAllBranches);
-app.post('/api/clients/:clientId/branches', branchController.createBranch);
-app.put('/api/clients/:clientId/branches/:branchId', branchController.updateBranch);
-app.delete('/api/clients/:clientId/branches/:branchId', branchController.deleteBranch);
-app.get('/api/clients/:clientId/service-charges', serviceChargeController.getServiceCharges);
-app.post('/api/clients/:clientId/service-charges', serviceChargeController.createServiceCharge);
-app.put('/api/clients/:clientId/service-charges/:chargeId', serviceChargeController.updateServiceCharge);
-app.delete('/api/clients/:clientId/service-charges/:chargeId', serviceChargeController.deleteServiceCharge);
-
-// Journey Plan routes
-app.get('/api/journey-plans', journeyPlanController.getJourneyPlans);
-app.get('/api/journey-plans/:id', journeyPlanController.getJourneyPlan);
-app.post('/api/journey-plans', journeyPlanController.createJourneyPlan);
-app.patch('/api/journey-plans/:id', journeyPlanController.updateJourneyPlan);
-app.delete('/api/journey-plans/:id', journeyPlanController.deleteJourneyPlan);
-
-
 // Test endpoint for debugging
 app.get('/api/health', async (req, res) => {
   try {
@@ -495,6 +436,42 @@ app.get('/api/test', (req, res) => {
     });
 });
 
+// Register all specific endpoints FIRST
+app.get('/api/countries', async (req, res) => {
+  try {
+    const [countries] = await db.query('SELECT id, name FROM Country ORDER BY name');
+    res.json({ success: true, data: countries });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Team routes
+app.post('/api/teams', teamController.createTeam);
+app.get('/api/teams', teamController.getTeams);
+
+// Client routes
+app.get('/api/clients', clientController.getAllClients);
+app.get('/api/clients/:id', clientController.getClient);
+app.post('/api/clients', clientController.createClient);
+app.put('/api/clients/:id', clientController.updateClient);
+app.delete('/api/clients/:id', clientController.deleteClient);
+app.get('/api/clients/:clientId/branches', branchController.getAllBranches);
+app.post('/api/clients/:clientId/branches', branchController.createBranch);
+app.put('/api/clients/:clientId/branches/:branchId', branchController.updateBranch);
+app.delete('/api/clients/:clientId/branches/:branchId', branchController.deleteBranch);
+app.get('/api/clients/:clientId/service-charges', serviceChargeController.getServiceCharges);
+app.post('/api/clients/:clientId/service-charges', serviceChargeController.createServiceCharge);
+app.put('/api/clients/:clientId/service-charges/:chargeId', serviceChargeController.updateServiceCharge);
+app.delete('/api/clients/:clientId/service-charges/:chargeId', serviceChargeController.deleteServiceCharge);
+
+// Journey Plan routes
+app.get('/api/journey-plans', journeyPlanController.getJourneyPlans);
+app.get('/api/journey-plans/:id', journeyPlanController.getJourneyPlan);
+app.post('/api/journey-plans', journeyPlanController.createJourneyPlan);
+app.patch('/api/journey-plans/:id', journeyPlanController.updateJourneyPlan);
+app.delete('/api/journey-plans/:id', journeyPlanController.deleteJourneyPlan);
+
 // Root endpoint to handle 404s
 app.get('/', (req, res) => {
   res.json({ 
@@ -503,6 +480,27 @@ app.get('/', (req, res) => {
     version: '1.0.0',
     timestamp: new Date().toISOString(),
     endpoints: {
+      health: '/api/health',
+      test: '/api/test',
+      auth: '/api/auth/login',
+      staff: '/api/staff',
+      clients: '/api/clients',
+      financial: '/api/financial'
+    }
+  });
+});
+
+// Note: Socket.IO functionality is not available in serverless environment
+// For real-time features, consider using external services like Pusher or Socket.io Cloud
+
+// Catch-all route for unmatched paths
+app.use('*', (req, res) => {
+  res.status(404).json({ 
+    message: 'Endpoint not found',
+    path: req.originalUrl,
+    method: req.method,
+    availableEndpoints: {
+      root: '/',
       health: '/api/health',
       test: '/api/test',
       auth: '/api/auth/login',

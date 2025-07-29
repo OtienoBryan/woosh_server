@@ -28,42 +28,9 @@ const myVisibilityReportRoutes = require('../routes/myVisibilityReportRoutes');
 
 const app = express();
 
-// CORS configuration
-const allowedOrigins = [
-  'http://localhost:5173', // Development
-  'http://localhost:3000', // Alternative dev port
-  'https://woosh-client.vercel.app', // Production frontend
-  'https://woosh-client-git-main-bryan-otienos-projects.vercel.app', // Vercel preview
-];
-
+// CORS configuration - Allow all origins for now to debug
 const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    // Check if origin is in allowed list
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    
-    // Allow Vercel preview URLs
-    if (origin.match(/^https:\/\/woosh-client-.*\.vercel\.app$/)) {
-      return callback(null, true);
-    }
-    
-    // Allow if FRONTEND_URL is set and matches
-    if (process.env.FRONTEND_URL && origin === process.env.FRONTEND_URL) {
-      return callback(null, true);
-    }
-    
-    // Allow if origin contains the expected domain
-    if (origin.includes('woosh-client') && origin.includes('vercel.app')) {
-      return callback(null, true);
-    }
-    
-    console.log('CORS blocked origin:', origin);
-    return callback(new Error('Not allowed by CORS'));
-  },
+  origin: true, // Allow all origins temporarily
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
@@ -493,9 +460,8 @@ app.get('/api/health', async (req, res) => {
       timestamp: new Date().toISOString(),
       env: process.env.NODE_ENV || 'development',
       cors: {
-        allowedOrigins,
-        frontendUrl: process.env.FRONTEND_URL,
-        origin: req.headers.origin
+        origin: req.headers.origin,
+        frontendUrl: process.env.FRONTEND_URL
       }
     });
   } catch (error) {
@@ -507,6 +473,15 @@ app.get('/api/health', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   }
+});
+
+// Simple CORS test endpoint
+app.get('/api/cors-test', (req, res) => {
+  res.json({
+    message: 'CORS test successful',
+    origin: req.headers.origin,
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Example API endpoint (from original server.js)

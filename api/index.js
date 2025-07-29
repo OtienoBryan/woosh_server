@@ -390,6 +390,24 @@ app.use((err, req, res, next) => {
   res.status(500).json({ message: 'Something went wrong!' });
 });
 
+// Catch-all route for unmatched paths
+app.use('*', (req, res) => {
+  res.status(404).json({ 
+    message: 'Endpoint not found',
+    path: req.originalUrl,
+    method: req.method,
+    availableEndpoints: {
+      root: '/',
+      health: '/api/health',
+      test: '/api/test',
+      auth: '/api/auth/login',
+      staff: '/api/staff',
+      clients: '/api/clients',
+      financial: '/api/financial'
+    }
+  });
+});
+
 // Note: Socket.IO functionality is not available in serverless environment
 // For real-time features, consider using external services like Pusher or Socket.io Cloud
 
@@ -451,6 +469,35 @@ app.get('/api/health', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   }
+});
+
+// Example API endpoint (from original server.js)
+app.get('/api/test', (req, res) => {
+  db.query('SELECT 1 + 1 AS solution')
+    .then(([results]) => {
+      res.json({ message: 'Database connection successful', results });
+    })
+    .catch(err => {
+      res.status(500).json({ error: err.message });
+    });
+});
+
+// Root endpoint to handle 404s
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'Woosh Finance API Server',
+    status: 'running',
+    version: '1.0.0',
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      health: '/api/health',
+      test: '/api/test',
+      auth: '/api/auth/login',
+      staff: '/api/staff',
+      clients: '/api/clients',
+      financial: '/api/financial'
+    }
+  });
 });
 
 // For serverless deployment, just export the app

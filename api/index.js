@@ -28,9 +28,25 @@ const myVisibilityReportRoutes = require('../routes/myVisibilityReportRoutes');
 
 const app = express();
 
-// CORS configuration - Allow all origins for now to debug
+// CORS configuration
 const corsOptions = {
-  origin: true, // Allow all origins temporarily
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = [
+      'https://woosh-client.vercel.app',
+      'http://localhost:5173',
+      'http://localhost:3000'
+    ];
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log('CORS blocked origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
@@ -39,6 +55,14 @@ const corsOptions = {
 // Middleware
 app.use(cors(corsOptions));
 app.use(express.json());
+
+// CORS debugging middleware
+app.use((req, res, next) => {
+  console.log('Request origin:', req.headers.origin);
+  console.log('Request method:', req.method);
+  console.log('Request path:', req.path);
+  next();
+});
 
 // Register all specific endpoints FIRST
 app.use('/api/my-visibility-reports', myVisibilityReportRoutes);
@@ -402,7 +426,12 @@ app.get('/api/health', async (req, res) => {
       env: process.env.NODE_ENV || 'development',
       cors: {
         origin: req.headers.origin,
-        frontendUrl: process.env.FRONTEND_URL
+        frontendUrl: process.env.FRONTEND_URL,
+        allowedOrigins: [
+          'https://woosh-client.vercel.app',
+          'http://localhost:5173',
+          'http://localhost:3000'
+        ]
       }
     });
   } catch (error) {
@@ -421,7 +450,12 @@ app.get('/api/cors-test', (req, res) => {
   res.json({
     message: 'CORS test successful',
     origin: req.headers.origin,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    allowedOrigins: [
+      'https://woosh-client.vercel.app',
+      'http://localhost:5173',
+      'http://localhost:3000'
+    ]
   });
 });
 

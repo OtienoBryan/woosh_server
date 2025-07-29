@@ -39,25 +39,9 @@ const leaveRequestRoutes = require('./routes/leaveRequestRoutes');
 
 const app = express();
 
-// Move CORS middleware to the very top
+// Move CORS middleware to the very top - TEMPORARILY ALLOW ALL ORIGINS
 const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    const allowedOrigins = [
-      'https://woosh-client.vercel.app',
-      'http://localhost:5173',
-      'http://localhost:3000'
-    ];
-    
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      console.log('CORS blocked origin:', origin);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: true, // Allow all origins temporarily
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,

@@ -1,18 +1,24 @@
-const db = require('../database/db');
+const connection = require('../database/db');
 
 const storeController = {
   // Get all stores
   getAllStores: async (req, res) => {
     try {
-      const [rows] = await db.query(`
+      const [stores] = await connection.query(`
         SELECT * FROM stores 
-        WHERE is_active = true 
-        ORDER BY store_name
+        ORDER BY store_name ASC
       `);
-      res.json({ success: true, data: rows });
+
+      res.json({
+        success: true,
+        data: stores
+      });
     } catch (error) {
       console.error('Error fetching stores:', error);
-      res.status(500).json({ success: false, error: 'Failed to fetch stores' });
+      res.status(500).json({
+        success: false,
+        error: 'Failed to fetch stores'
+      });
     }
   },
 
@@ -20,16 +26,177 @@ const storeController = {
   getStoreById: async (req, res) => {
     try {
       const { id } = req.params;
-      const [rows] = await db.query('SELECT * FROM stores WHERE id = ?', [id]);
-      
-      if (rows.length === 0) {
-        return res.status(404).json({ success: false, error: 'Store not found' });
+
+      const [stores] = await connection.query(`
+        SELECT * FROM stores WHERE id = ?
+      `, [id]);
+
+      if (stores.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Store not found'
+        });
       }
-      
-      res.json({ success: true, data: rows[0] });
+
+      res.json({
+        success: true,
+        data: stores[0]
+      });
     } catch (error) {
       console.error('Error fetching store:', error);
-      res.status(500).json({ success: false, error: 'Failed to fetch store' });
+      res.status(500).json({
+        success: false,
+        error: 'Failed to fetch store'
+      });
+    }
+  },
+
+  // Create new store
+  createStore: async (req, res) => {
+    try {
+      const { store_name, store_code, location, address, phone, email } = req.body;
+
+      // Validation
+      if (!store_name || !store_code) {
+        return res.status(400).json({
+          success: false,
+          error: 'Store name and code are required'
+        });
+      }
+
+      // Check if store_code already exists
+      const [existingStores] = await connection.query(`
+        SELECT id FROM stores WHERE store_code = ?
+      `, [store_code]);
+
+      if (existingStores.length > 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Store code already exists'
+        });
+      }
+
+      // Insert new store
+      const [result] = await connection.query(`
+        INSERT INTO stores (store_name, store_code, location, address, phone, email)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `, [store_name, store_code, location, address, phone, email]);
+
+      // Get the created store
+      const [createdStores] = await connection.query(`
+        SELECT * FROM stores WHERE id = ?
+      `, [result.insertId]);
+
+      res.status(201).json({
+        success: true,
+        data: createdStores[0],
+        message: 'Store created successfully'
+      });
+    } catch (error) {
+      console.error('Error creating store:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to create store'
+      });
+    }
+  },
+
+  // Update store
+  updateStore: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { store_name, store_code, location, address, phone, email } = req.body;
+
+      // Check if store exists
+      const [existingStores] = await connection.query(`
+        SELECT id FROM stores WHERE id = ?
+      `, [id]);
+
+      if (existingStores.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Store not found'
+        });
+      }
+
+      // Check if store_code already exists (excluding current store)
+      if (store_code) {
+        const [duplicateStores] = await connection.query(`
+          SELECT id FROM stores WHERE store_code = ? AND id != ?
+        `, [store_code, id]);
+
+        if (duplicateStores.length > 0) {
+          return res.status(400).json({
+            success: false,
+            error: 'Store code already exists'
+          });
+        }
+      }
+
+      // Update store
+      await connection.query(`
+        UPDATE stores SET
+          store_name = ?,
+          store_code = ?,
+          location = ?,
+          address = ?,
+          phone = ?,
+          email = ?,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `, [store_name, store_code, location, address, phone, email, id]);
+
+      // Get the updated store
+      const [updatedStores] = await connection.query(`
+        SELECT * FROM stores WHERE id = ?
+      `, [id]);
+
+      res.json({
+        success: true,
+        data: updatedStores[0],
+        message: 'Store updated successfully'
+      });
+    } catch (error) {
+      console.error('Error updating store:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to update store'
+      });
+    }
+  },
+
+  // Delete store
+  deleteStore: async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      // Check if store exists
+      const [existingStores] = await connection.query(`
+        SELECT id FROM stores WHERE id = ?
+      `, [id]);
+
+      if (existingStores.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Store not found'
+        });
+      }
+
+      // Delete store
+      await connection.query(`
+        DELETE FROM stores WHERE id = ?
+      `, [id]);
+
+      res.json({
+        success: true,
+        message: 'Store deleted successfully'
+      });
+    } catch (error) {
+      console.error('Error deleting store:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to delete store'
+      });
     }
   },
 
@@ -38,7 +205,7 @@ const storeController = {
     try {
       const { storeId } = req.params;
       
-      const [rows] = await db.query(`
+      const [rows] = await connection.query(`
         SELECT 
           si.*,
           p.product_name,
@@ -63,7 +230,7 @@ const storeController = {
   // Get all stores inventory summary
   getAllStoresInventory: async (req, res) => {
     try {
-      const [rows] = await db.query(`
+      const [rows] = await connection.query(`
         SELECT 
           si.store_id as store_id,
           s.store_name,
@@ -93,7 +260,7 @@ const storeController = {
   // Get inventory summary by store
   getInventorySummaryByStore: async (req, res) => {
     try {
-      const [rows] = await db.query(`
+      const [rows] = await connection.query(`
         SELECT 
           s.id,
           s.store_name,
@@ -148,11 +315,11 @@ const storeController = {
         countSql += ' AND store_id = ?';
         countParams.push(store_id);
       }
-      const [[countRow]] = await db.query(countSql, countParams);
+      const [[countRow]] = await connection.query(countSql, countParams);
       const total = countRow ? countRow.total : 0;
       const totalPages = Math.ceil(total / pageSize) || 1;
       // Get paginated data
-      const [rows] = await db.query(sql, params);
+      const [rows] = await connection.query(sql, params);
       res.json({ success: true, data: rows, pagination: { total, totalPages, page: pageNum, limit: pageSize } });
     } catch (error) {
       console.error('Error fetching inventory transactions:', error);
@@ -194,7 +361,7 @@ const storeController = {
         GROUP BY it.store_id, it.product_id
         ORDER BY s.store_name, p.product_name
       `;
-      const [rows] = await db.query(sql, params);
+      const [rows] = await connection.query(sql, params);
       res.json({ success: true, data: rows });
     } catch (error) {
       console.error('Error fetching inventory as of date:', error);
@@ -204,7 +371,7 @@ const storeController = {
 
   // Record a stock transfer
   recordStockTransfer: async (req, res) => {
-    const connection = await db.getConnection();
+    const connection = await connection.getConnection();
     try {
       await connection.beginTransaction();
       const { from_store_id, to_store_id, transfer_date, staff_id, reference, notes, items } = req.body;
@@ -317,7 +484,7 @@ const storeController = {
       if (start_date) { sql += ' AND t.transfer_date >= ?'; params.push(start_date); }
       if (end_date) { sql += ' AND t.transfer_date <= ?'; params.push(end_date); }
       sql += ' ORDER BY t.transfer_date DESC, t.id DESC';
-      const [rows] = await db.query(sql, params);
+      const [rows] = await connection.query(sql, params);
       res.json({ success: true, data: rows });
     } catch (error) {
       console.error('Error fetching transfer history:', error);
@@ -326,7 +493,7 @@ const storeController = {
   },
 
   recordStockTake: async (req, res) => {
-    const connection = await db.getConnection();
+    const connection = await connection.getConnection();
     try {
       await connection.beginTransaction();
       const { store_id, items, date, staff_id, notes } = req.body;
@@ -419,11 +586,11 @@ const storeController = {
       if (staff_id) { countSql += ' AND staff_id = ?'; countParams.push(staff_id); }
       if (start_date) { countSql += ' AND take_date >= ?'; countParams.push(start_date); }
       if (end_date) { countSql += ' AND take_date <= ?'; countParams.push(end_date); }
-      const [[countRow]] = await db.query(countSql, countParams);
+      const [[countRow]] = await connection.query(countSql, countParams);
       const total = countRow ? countRow.total : 0;
       const totalPages = Math.ceil(total / pageSize) || 1;
       // Get paginated data
-      const [rows] = await db.query(sql, params);
+      const [rows] = await connection.query(sql, params);
       res.json({ success: true, data: rows, pagination: { total, totalPages, page: pageNum, limit: pageSize } });
     } catch (error) {
       console.error('Error fetching stock take history:', error);
@@ -438,7 +605,7 @@ const storeController = {
       if (!stock_take_id) {
         return res.status(400).json({ success: false, error: 'Missing stock_take_id' });
       }
-      const [rows] = await db.query(`
+      const [rows] = await connection.query(`
         SELECT sti.*, p.product_name
         FROM stock_take_items sti
         LEFT JOIN products p ON sti.product_id = p.id

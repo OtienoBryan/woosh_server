@@ -9,6 +9,9 @@ const clientController = {
       const page = parseInt(req.query.page, 10) || 1;
       const limit = parseInt(req.query.limit, 10) || 20;
       const offset = (page - 1) * limit;
+      
+      // If limit is very high (like 10000), return all clients without pagination
+      const getAllClients = limit >= 10000;
       const search = req.query.search ? String(req.query.search).trim() : '';
       const countryId = req.query.countryId ? String(req.query.countryId) : '';
       const regionId = req.query.regionId ? String(req.query.regionId) : '';
@@ -41,29 +44,52 @@ const clientController = {
       // Get total count
       const [countRows] = await db.query(`SELECT COUNT(*) as count FROM Clients ${where}`, params);
       const total = countRows[0].count;
-      const totalPages = Math.ceil(total / limit);
+      const totalPages = getAllClients ? 1 : Math.ceil(total / limit);
 
-      // Get paginated data
-      const [clients] = await db.query(
-        `SELECT c.*, oc.name as client_type_name, co.name as country_name, r.name as region_name, rt.name as route_name,
-          (
-            SELECT COALESCE(SUM(l.debit - l.credit), 0)
-            FROM client_ledger l
-            WHERE l.client_id = c.id
-          ) as balance
-         FROM Clients c
-         LEFT JOIN outlet_categories oc ON c.client_type = oc.id
-         LEFT JOIN Country co ON c.countryId = co.id
-         LEFT JOIN Regions r ON c.region_id = r.id
-         LEFT JOIN routes rt ON c.route_id_update = rt.id
-         ${where} ORDER BY c.created_at DESC LIMIT ? OFFSET ?`,
-        [...params, limit, offset]
-      );
-      console.log(`[getAllClients] returning ${clients.length} clients (page ${page})`);
+      // Get data (with or without pagination)
+      let clients;
+      if (getAllClients) {
+        // Return all clients without pagination
+        [clients] = await db.query(
+          `SELECT c.*, oc.name as client_type_name, co.name as country_name, r.name as region_name, rt.name as route_name,
+            (
+              SELECT COALESCE(SUM(l.debit - l.credit), 0)
+              FROM client_ledger l
+              WHERE l.client_id = c.id
+            ) as balance
+           FROM Clients c
+           LEFT JOIN outlet_categories oc ON c.client_type = oc.id
+           LEFT JOIN Country co ON c.countryId = co.id
+           LEFT JOIN Regions r ON c.region_id = r.id
+           LEFT JOIN routes rt ON c.route_id_update = rt.id
+           ${where} ORDER BY c.name ASC`,
+          params
+        );
+        console.log(`[getAllClients] returning ALL ${clients.length} clients (no pagination)`);
+      } else {
+        // Return paginated data
+        [clients] = await db.query(
+          `SELECT c.*, oc.name as client_type_name, co.name as country_name, r.name as region_name, rt.name as route_name,
+            (
+              SELECT COALESCE(SUM(l.debit - l.credit), 0)
+              FROM client_ledger l
+              WHERE l.client_id = c.id
+            ) as balance
+           FROM Clients c
+           LEFT JOIN outlet_categories oc ON c.client_type = oc.id
+           LEFT JOIN Country co ON c.countryId = co.id
+           LEFT JOIN Regions r ON c.region_id = r.id
+           LEFT JOIN routes rt ON c.route_id_update = rt.id
+           ${where} ORDER BY c.created_at DESC LIMIT ? OFFSET ?`,
+          [...params, limit, offset]
+        );
+        console.log(`[getAllClients] returning ${clients.length} clients (page ${page})`);
+      }
+      
       res.json({
         data: clients,
-        page,
-        limit,
+        page: getAllClients ? 1 : page,
+        limit: getAllClients ? total : limit,
         total,
         totalPages
       });

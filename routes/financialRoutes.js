@@ -94,7 +94,14 @@ router.post('/purchase-orders/:purchaseOrderId/receive', purchaseOrderController
 // Sales Orders Routes
 router.get('/sales-orders', salesOrderController.getAllSalesOrders);
 router.get('/sales-orders/:id', salesOrderController.getSalesOrderById);
-router.post('/sales-orders', salesOrderController.createSalesOrder);
+router.post('/sales-orders', (req, res, next) => {
+  console.log('=== SALES ORDERS ROUTE HIT ===');
+  console.log('Method:', req.method);
+  console.log('URL:', req.url);
+  console.log('Body:', JSON.stringify(req.body, null, 2));
+  console.log('Headers:', JSON.stringify(req.headers, null, 2));
+  next();
+}, salesOrderController.createSalesOrder);
 router.put('/sales-orders/:id', salesOrderController.updateSalesOrder);
 router.delete('/sales-orders/:id', salesOrderController.deleteSalesOrder);
 router.get('/sales-orders/:id/items', salesOrderController.getSalesOrderItems);
@@ -102,6 +109,8 @@ router.get('/sales-orders/:id/items', salesOrderController.getSalesOrderItems);
 router.patch('/sales-orders/:id', salesOrderController.assignRider);
 // Add POST route for receiving items back to stock
 router.post('/sales-orders/:id/receive-back', salesOrderController.receiveBackToStock);
+// Add POST route for converting order to invoice
+router.post('/sales-orders/:id/convert-to-invoice', salesOrderController.convertToInvoice);
 
 // Stores Routes
 router.get('/stores', storeController.getAllStores);

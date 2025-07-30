@@ -36,6 +36,11 @@ const myVisibilityReportRoutes = require('./routes/myVisibilityReportRoutes');
 const feedbackReportRoutes = require('./routes/feedbackReportRoutes');
 const availabilityReportRoutes = require('./routes/availabilityReportRoutes');
 const leaveRequestRoutes = require('./routes/leaveRequestRoutes');
+const supplierRoutes = require('./routes/supplierRoutes');
+const receiptRoutes = require('./routes/receiptRoutes');
+const myAssetsRoutes = require('./routes/myAssetsRoutes');
+const faultyProductsRoutes = require('./routes/faultyProductsRoutes');
+const storeRoutes = require('./routes/storeRoutes');
 
 const app = express();
 
@@ -401,7 +406,9 @@ app.delete('/api/journey-plans/:id', journeyPlanController.deleteJourneyPlan);
 
 
 // Financial System Routes
+console.log('Registering financial routes at /api/financial');
 app.use('/api/financial', financialRoutes);
+console.log('Financial routes registered successfully');
 app.use('/api/payroll', payrollRoutes);
 app.use('/api', staffRoutes);
 app.use('/api/chat', chatRoutes);
@@ -409,6 +416,11 @@ app.use('/api/managers', managerRoutes);
 app.use('/api/sales', salesRoutes);
 app.use('/api/notices', noticeRoutes);
 app.use('/api/login-history', loginHistoryRoutes);
+app.use('/api', supplierRoutes);
+app.use('/api', receiptRoutes);
+app.use('/api/my-assets', myAssetsRoutes);
+app.use('/api/faulty-products', faultyProductsRoutes);
+app.use('/api/stores', storeRoutes);
 app.use('/api', clientRoutes);
 app.use('/api/sales-rep-leaves', salesRepLeaveRoutes);
 app.use('/api/calendar-tasks', calendarTaskRoutes);
@@ -1262,6 +1274,20 @@ app.get('/api/test', (req, res) => {
     });
 });
 
+// Test sales orders endpoint
+app.get('/api/test-sales-orders', (req, res) => {
+  console.log('=== TEST SALES ORDERS ENDPOINT ===');
+  res.json({ 
+    message: 'Sales orders endpoint is accessible',
+    timestamp: new Date().toISOString(),
+    routes: {
+      'GET /api/financial/sales-orders': 'Get all sales orders',
+      'POST /api/financial/sales-orders': 'Create sales order',
+      'GET /api/financial/sales-orders/:id': 'Get sales order by ID'
+    }
+  });
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack);
@@ -1272,7 +1298,9 @@ const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: [
-      'https://woosh-client.vercel.app'
+      'https://woosh-client.vercel.app',
+      'http://localhost:5173',
+      'http://localhost:3000'
     ],
     methods: ['GET', 'POST'],
     credentials: true

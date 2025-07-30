@@ -412,7 +412,9 @@ app.get('/api/health', async (req, res) => {
         origin: req.headers.origin,
         frontendUrl: process.env.FRONTEND_URL,
         allowedOrigins: [
-          'https://woosh-client.vercel.app'
+          'https://woosh-client.vercel.app',
+          'http://localhost:5173',
+          'http://localhost:3000'
         ]
       }
     });

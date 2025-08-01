@@ -1614,6 +1614,55 @@ const createJournalEntry = async (req, res) => {
   }
 };
 
+const getProductsSaleReport = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    
+    let dateFilter = '';
+    const params = [];
+    
+    if (startDate && endDate) {
+      dateFilter = 'AND so.order_date BETWEEN ? AND ?';
+      params.push(startDate, endDate);
+    }
+
+    const query = `
+      SELECT 
+        p.id,
+        p.product_name,
+        p.product_code,
+        c.name as category_name,
+        COALESCE(SUM(soi.quantity), 0) as total_quantity,
+        COALESCE(SUM(soi.quantity * soi.unit_price), 0) as total_amount,
+        COUNT(DISTINCT so.id) as total_orders,
+        CASE 
+          WHEN SUM(soi.quantity) > 0 
+          THEN SUM(soi.quantity * soi.unit_price) / SUM(soi.quantity)
+          ELSE 0 
+        END as average_price
+      FROM products p
+      LEFT JOIN Category c ON p.category_id = c.id
+      LEFT JOIN sales_order_items soi ON p.id = soi.product_id
+      LEFT JOIN sales_orders so ON soi.sales_order_id = so.id
+      WHERE so.my_status = 1 ${dateFilter}
+      GROUP BY p.id, p.product_name, p.product_code, c.name
+      HAVING total_quantity > 0
+      ORDER BY total_amount DESC
+    `;
+
+    console.log('Executing products sale report query:', query);
+    console.log('Query params:', params);
+
+    const [rows] = await db.query(query, params);
+    console.log('Products sale report result:', rows.length, 'products');
+
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    console.error('Error fetching products sale report:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch products sale report' });
+  }
+};
+
 module.exports = {
   chartOfAccountsController,
   suppliersController,
@@ -1652,4 +1701,5 @@ module.exports = {
   getAssetsTotalValue,
   getAllExpenses,
   createJournalEntry,
+  getProductsSaleReport,
 }; 

@@ -4,16 +4,34 @@ const salesOrderController = {
   // Get all sales orders
   getAllSalesOrders: async (req, res) => {
     try {
+      console.log('Fetching all sales orders with my_status = 1...');
+      
+      // First, let's check how many sales orders exist in total
+      const [totalOrders] = await db.query('SELECT COUNT(*) as total FROM sales_orders');
+      console.log('Total sales orders in database:', totalOrders[0].total);
+      
+      // Check how many have my_status = 1
+      const [confirmedOrders] = await db.query('SELECT COUNT(*) as confirmed FROM sales_orders WHERE my_status = 1');
+      console.log('Sales orders with my_status = 1:', confirmedOrders[0].confirmed);
+      
       const [rows] = await db.query(`
         SELECT 
           so.*, 
           c.name as customer_name, 
-          u.full_name as created_by_name
+          u.full_name as created_by_name,
+          sr.name as salesrep
         FROM sales_orders so
         LEFT JOIN Clients c ON so.client_id = c.id
         LEFT JOIN users u ON so.created_by = u.id
+        LEFT JOIN SalesRep sr ON so.salesrep = sr.id
+        WHERE so.my_status = 1
         ORDER BY so.created_at DESC
       `);
+      
+      console.log('Query result rows:', rows.length);
+      if (rows.length > 0) {
+        console.log('Sample order:', rows[0]);
+      }
       
       // Get items for each sales order
       for (let order of rows) {
@@ -48,6 +66,7 @@ const salesOrderController = {
         }));
       }
       
+      console.log('Final response data length:', rows.length);
       res.json({ success: true, data: rows });
     } catch (error) {
       console.error('Error fetching sales orders:', error);
@@ -69,10 +88,12 @@ const salesOrderController = {
           c.email,
           c.address,
           c.tax_pin,
-          u.full_name as created_by_name
+          u.full_name as created_by_name,
+          sr.name as salesrep
         FROM sales_orders so
         LEFT JOIN Clients c ON so.client_id = c.id
         LEFT JOIN users u ON so.created_by = u.id
+        LEFT JOIN SalesRep sr ON so.sales_rep_id = sr.id
         WHERE so.id = ?
       `, [id]);
       if (salesOrders.length === 0) {
@@ -267,6 +288,9 @@ const salesOrderController = {
       const { id } = req.params;
       const { customer_id, client_id, order_date, expected_delivery_date, notes, status, items } = req.body;
       
+      // Get the current user ID from the request
+      const currentUserId = req.user?.id || 1; // Default to user ID 1 if not available
+      
       // Check if sales order exists and get current data
       const [existingSO] = await connection.query('SELECT * FROM sales_orders WHERE id = ?', [id]);
       if (existingSO.length === 0) {
@@ -292,6 +316,12 @@ const salesOrderController = {
       };
       const statusString = statusMap[status] || status || existingSO[0].status;
       
+      // Determine my_status based on status change
+      let myStatus = existingSO[0].my_status || 0;
+      if (statusString === 'confirmed' && existingSO[0].status !== 'confirmed') {
+        myStatus = 1; // Set to approved when status changes to confirmed
+      }
+      
       // Update sales order - preserve existing values if not provided
       await connection.query(`
         UPDATE sales_orders 
@@ -299,11 +329,12 @@ const salesOrderController = {
             order_date = COALESCE(?, order_date), 
             expected_delivery_date = ?, 
             status = ?,
+            my_status = ?,
             total_amount = ?, 
             notes = COALESCE(?, notes),
             updated_at = NOW()
         WHERE id = ?
-      `, [clientId, order_date, expected_delivery_date, statusString, totalAmount, notes, id]);
+      `, [clientId, order_date, expected_delivery_date, statusString, myStatus, totalAmount, notes, id]);
       
       // Delete existing items
       await connection.query('DELETE FROM sales_order_items WHERE sales_order_id = ?', [id]);
@@ -316,6 +347,119 @@ const salesOrderController = {
           ) VALUES (?, ?, ?, ?, ?)
         `, [id, item.product_id, item.quantity, item.unit_price, item.quantity * item.unit_price]);
       }
+      
+      // Create journal entries and update client ledger when order is approved (status changes to confirmed)
+      if (statusString === 'confirmed' && existingSO[0].status !== 'confirmed') {
+        console.log('Creating journal entries and updating client ledger for approved order:', id);
+        console.log('Status changed from:', existingSO[0].status, 'to:', statusString);
+        console.log('Condition met: statusString === "confirmed" && existingSO[0].status !== "confirmed"');
+        
+        // Get required accounts
+        const [arAccount] = await connection.query(
+          'SELECT id FROM chart_of_accounts WHERE id = ? AND is_active = 1',
+          ['140'] // Accounts Receivable account code
+        );
+        
+        const [salesAccount] = await connection.query(
+          'SELECT id FROM chart_of_accounts WHERE id = ? AND is_active = 1',
+          ['53'] // Sales Revenue account code
+        );
+        
+        const [taxAccount] = await connection.query(
+          'SELECT id FROM chart_of_accounts WHERE id = ? AND is_active = 1',
+          ['35'] // Sales Tax Payable account code
+        );
+        
+        if (arAccount.length && salesAccount.length) {
+          console.log('Creating journal entry for order:', id);
+          console.log('AR Account found:', arAccount[0]);
+          console.log('Sales Account found:', salesAccount[0]);
+          console.log('Tax Account found:', taxAccount[0] || 'Not found');
+          console.log('Current User ID:', currentUserId);
+          console.log('Total Amount:', totalAmount);
+          
+          // Create journal entry
+          const [journalResult] = await connection.query(
+            `INSERT INTO journal_entries (entry_number, entry_date, reference, description, total_debit, total_credit, status, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, 'posted', ?)`,
+            [
+              `JE-SO-${id}-${Date.now()}`,
+              order_date || existingSO[0].order_date,
+              `SO-${id}`,
+              `Sales order approved - ${existingSO[0].so_number}`,
+              totalAmount,
+              totalAmount,
+              currentUserId
+            ]
+          );
+          const journalEntryId = journalResult.insertId;
+          console.log('Journal entry created with ID:', journalEntryId);
+          
+          // Debit Accounts Receivable
+          await connection.query(
+            `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+             VALUES (?, ?, ?, 0, ?)`,
+            [journalEntryId, arAccount[0].id, totalAmount, `Sales order ${existingSO[0].so_number}`]
+          );
+          
+          // Credit Sales Revenue
+          await connection.query(
+            `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+             VALUES (?, ?, 0, ?, ?)`,
+            [journalEntryId, salesAccount[0].id, subtotal, `Sales revenue for order ${existingSO[0].so_number}`]
+          );
+          
+          // Credit Sales Tax Payable (if tax account exists and tax amount > 0)
+          if (taxAccount.length > 0 && taxAmount > 0) {
+            await connection.query(
+              `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+               VALUES (?, ?, 0, ?, ?)`,
+              [journalEntryId, taxAccount[0].id, taxAmount, `Sales tax for order ${existingSO[0].so_number}`]
+            );
+          }
+          
+          // Update client ledger
+          const [lastClientLedger] = await connection.query(
+            'SELECT running_balance FROM client_ledger WHERE client_id = ? ORDER BY date DESC, id DESC LIMIT 1',
+            [clientId]
+          );
+          
+          const prevBalance = lastClientLedger.length > 0 ? parseFloat(lastClientLedger[0].running_balance) : 0;
+          const newBalance = prevBalance + totalAmount; // Debit increases the receivable balance
+          
+          await connection.query(
+            `INSERT INTO client_ledger (client_id, date, description, reference_type, reference_id, debit, credit, running_balance)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              clientId,
+              order_date || existingSO[0].order_date,
+              `Sales order - ${existingSO[0].so_number}`,
+              'sales_order',
+              id,
+              totalAmount,
+              0,
+              newBalance
+            ]
+          );
+          
+          console.log('Journal entries and client ledger updated successfully for order:', id);
+          console.log('Client balance updated from', prevBalance, 'to', newBalance);
+        } else {
+          console.error('Required accounts not found for journal entry creation');
+          console.error('AR Account (ID: 140):', arAccount);
+          console.error('Sales Account (ID: 53):', salesAccount);
+          if (taxAccount.length === 0) {
+            console.warn('Tax Account (ID: 35) not found - tax entries will be skipped');
+          }
+        }
+      } else {
+        console.log('Journal entries not created - condition not met:');
+        console.log('  statusString:', statusString);
+        console.log('  existingSO[0].status:', existingSO[0].status);
+        console.log('  statusString === "confirmed":', statusString === 'confirmed');
+        console.log('  existingSO[0].status !== "confirmed":', existingSO[0].status !== 'confirmed');
+      }
+      
       await connection.commit();
       console.log('Sales order updated successfully:', id);
       console.log('Status changed to:', statusString, 'my_status set to:', myStatus);
@@ -437,70 +581,188 @@ const salesOrderController = {
     }
   },
 
-  // Convert order to invoice and copy to sales_orders table
+  // Convert order to invoice
   convertToInvoice: async (req, res) => {
+    const connection = await db.getConnection();
     try {
+      await connection.beginTransaction();
       const { id } = req.params;
-      const invoiceData = req.body;
+      const { expected_delivery_date, notes } = req.body;
       
       console.log('=== CONVERTING ORDER TO INVOICE ===');
       console.log('Order ID:', id);
-      console.log('Invoice data:', JSON.stringify(invoiceData, null, 2));
       
-      // Start transaction
-      const connection = await db.getConnection();
-      await connection.beginTransaction();
+      // Get the current user ID from the request
+      const currentUserId = req.user?.id || 1;
       
-      try {
-        // Get the original order from sales_orders table
-        const [orders] = await connection.query(`
-          SELECT * FROM sales_orders WHERE id = ?
-        `, [id]);
-        
-        if (orders.length === 0) {
-          await connection.rollback();
-          return res.status(404).json({ success: false, error: 'Order not found' });
-        }
-        
-        const originalOrder = orders[0];
-        
-        console.log('Original order:', JSON.stringify(originalOrder, null, 2));
-        
-        // Update the order status to confirmed (invoice status)
-        await connection.query(`
-          UPDATE sales_orders 
-          SET status = ?, updated_at = NOW()
-          WHERE id = ?
-        `, ['confirmed', id]);
-        
-        console.log('=== CONVERSION SUCCESSFUL ===');
-        console.log('Order ID:', id);
-        console.log('Status updated to: confirmed');
-        
-        // Commit transaction
-        await connection.commit();
-        
-        console.log('=== CONVERSION SUCCESSFUL ===');
-        console.log('New invoice ID:', salesOrderId);
-        console.log('Invoice number:', invoiceNumber);
-        
-        res.json({ 
-          success: true, 
-          message: 'Order successfully converted to invoice',
-          orderId: id,
-          status: 'confirmed'
-        });
-        
-      } catch (error) {
-        await connection.rollback();
-        throw error;
-      } finally {
-        connection.release();
+      // Check if sales order exists and get current data
+      const [existingSO] = await connection.query('SELECT * FROM sales_orders WHERE id = ?', [id]);
+      if (existingSO.length === 0) {
+        return res.status(404).json({ success: false, error: 'Sales order not found' });
       }
       
+      const originalOrder = existingSO[0];
+      console.log('Original order status:', originalOrder.status);
+      
+      // Check if order is already confirmed
+      if (originalOrder.status === 'confirmed') {
+        return res.status(400).json({ success: false, error: 'Order is already confirmed/invoiced' });
+      }
+      
+      // Get order items to calculate totals
+      const [items] = await connection.query(`
+        SELECT * FROM sales_order_items WHERE sales_order_id = ?
+      `, [id]);
+      
+      if (items.length === 0) {
+        return res.status(400).json({ success: false, error: 'No items found in this order' });
+      }
+      
+      // Calculate totals
+      const subtotal = items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
+      const taxAmount = subtotal * 0.1; // 10% tax
+      const totalAmount = subtotal + taxAmount;
+      
+      // Update sales order to confirmed status and set my_status to 1
+      await connection.query(`
+        UPDATE sales_orders 
+        SET status = 'confirmed',
+            my_status = 1,
+            expected_delivery_date = COALESCE(?, expected_delivery_date),
+            notes = COALESCE(?, notes),
+            subtotal = ?,
+            tax_amount = ?,
+            total_amount = ?,
+            so_number = CONCAT('INV-', ?),
+            updated_at = NOW()
+        WHERE id = ?
+      `, [expected_delivery_date, notes, subtotal, taxAmount, totalAmount, id, id]);
+      
+      console.log('Order updated to confirmed status');
+      
+      // Create journal entries for the invoice
+      console.log('Creating journal entries for invoice conversion');
+      
+      // Get required accounts
+      const [arAccount] = await connection.query(
+        'SELECT id FROM chart_of_accounts WHERE id = ? AND is_active = 1',
+        ['140'] // Accounts Receivable account ID
+      );
+      
+      const [salesAccount] = await connection.query(
+        'SELECT id FROM chart_of_accounts WHERE id = ? AND is_active = 1',
+        ['53'] // Sales Revenue account ID
+      );
+      
+      const [taxAccount] = await connection.query(
+        'SELECT id FROM chart_of_accounts WHERE id = ? AND is_active = 1',
+        ['35'] // Sales Tax Payable account ID
+      );
+      
+      if (arAccount.length && salesAccount.length) {
+        console.log('Creating journal entry for invoice conversion');
+        
+        // Create journal entry
+        const [journalResult] = await connection.query(
+          `INSERT INTO journal_entries (entry_number, entry_date, reference, description, total_debit, total_credit, status, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, 'posted', ?)`,
+          [
+            `JE-INV-${id}-${Date.now()}`,
+            originalOrder.order_date,
+            `INV-${id}`,
+            `Invoice created from order - ${originalOrder.so_number}`,
+            totalAmount,
+            totalAmount,
+            currentUserId
+          ]
+        );
+        const journalEntryId = journalResult.insertId;
+        console.log('Journal entry created with ID:', journalEntryId);
+        
+        // Debit Accounts Receivable
+        await connection.query(
+          `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+           VALUES (?, ?, ?, 0, ?)`,
+          [journalEntryId, arAccount[0].id, totalAmount, `Invoice INV-${id}`]
+        );
+        
+        // Credit Sales Revenue
+        await connection.query(
+          `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+           VALUES (?, ?, 0, ?, ?)`,
+          [journalEntryId, salesAccount[0].id, subtotal, `Sales revenue for invoice INV-${id}`]
+        );
+        
+        // Credit Sales Tax Payable (if tax account exists and tax amount > 0)
+        if (taxAccount.length > 0 && taxAmount > 0) {
+          await connection.query(
+            `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+             VALUES (?, ?, 0, ?, ?)`,
+            [journalEntryId, taxAccount[0].id, taxAmount, `Sales tax for invoice INV-${id}`]
+          );
+        }
+        
+        // Update client ledger
+        const [lastClientLedger] = await connection.query(
+          'SELECT running_balance FROM client_ledger WHERE client_id = ? ORDER BY date DESC, id DESC LIMIT 1',
+          [originalOrder.client_id]
+        );
+        
+        const prevBalance = lastClientLedger.length > 0 ? parseFloat(lastClientLedger[0].running_balance) : 0;
+        const newBalance = prevBalance + totalAmount; // Debit increases the receivable balance
+        
+        await connection.query(
+          `INSERT INTO client_ledger (client_id, date, description, reference_type, reference_id, debit, credit, running_balance)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            originalOrder.client_id,
+            originalOrder.order_date,
+            `Invoice - INV-${id}`,
+            'sales_order',
+            id,
+            totalAmount,
+            0,
+            newBalance
+          ]
+        );
+        
+        console.log('Journal entries and client ledger updated successfully for invoice');
+        console.log('Client balance updated from', prevBalance, 'to', newBalance);
+      } else {
+        console.error('Required accounts not found for journal entry creation');
+        console.error('AR Account (ID: 140):', arAccount);
+        console.error('Sales Account (ID: 53):', salesAccount);
+        if (taxAccount.length === 0) {
+          console.warn('Tax Account (ID: 35) not found - tax entries will be skipped');
+        }
+      }
+      
+      await connection.commit();
+      console.log('=== INVOICE CONVERSION SUCCESSFUL ===');
+      console.log('Order ID:', id);
+      console.log('Status updated to: confirmed');
+      console.log('my_status set to: 1');
+      
+      res.json({ 
+        success: true, 
+        message: 'Order successfully converted to invoice',
+        orderId: id,
+        status: 'confirmed',
+        my_status: 1
+      });
+      
     } catch (error) {
-      console.error('Error converting order to invoice:', error);
-      res.status(500).json({ success: false, error: 'Failed to convert order to invoice' });
+      await connection.rollback();
+      console.error('=== ERROR CONVERTING TO INVOICE ===');
+      console.error('Error details:', error);
+      console.error('Error message:', error.message);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to convert order to invoice',
+        details: error.message 
+      });
+    } finally {
+      connection.release();
     }
   }
 };

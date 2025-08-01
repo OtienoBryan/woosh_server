@@ -641,4 +641,398 @@ exports.getSalesRepPerformance = async (req, res) => {
     });
     res.status(500).json({ success: false, error: err.message });
   }
-}; 
+};
+
+// Get master sales data for all clients by year
+exports.getMasterSalesData = async (req, res) => {
+  try {
+    const { year, category, salesRep, categoryGroup, startDate, endDate, clientStatus } = req.query;
+    const currentYear = year || new Date().getFullYear();
+    
+    // Parse category and salesRep as arrays
+    const categories = category ? (Array.isArray(category) ? category : [category]) : [];
+    const salesReps = salesRep ? (Array.isArray(salesRep) ? salesRep : [salesRep]) : [];
+
+    // Get all clients with their sales data for each month
+    const [rows] = await db.query(`
+      SELECT 
+        c.id as client_id,
+        c.name as client_name,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 1 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as january,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 2 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as february,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 3 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as march,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 4 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as april,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 5 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as may,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 6 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as june,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 7 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as july,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 8 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as august,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 9 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as september,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 10 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as october,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 11 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as november,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 12 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as december,
+        COALESCE(SUM(CASE WHEN YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as total
+      FROM Clients c
+      LEFT JOIN sales_orders so ON c.id = so.client_id AND so.my_status = 1
+      LEFT JOIN sales_order_items soi ON so.id = soi.sales_order_id
+      LEFT JOIN products p ON soi.product_id = p.id
+      LEFT JOIN Category cat ON p.category_id = cat.id
+      LEFT JOIN SalesRep sr ON c.route_id_update = sr.route_id_update
+      ${(() => {
+        const conditions = [];
+        if (categories.length > 0) {
+          conditions.push('cat.id IN (' + categories.map(() => '?').join(',') + ')');
+        }
+        if (categoryGroup === 'vapes') {
+          conditions.push('p.category_id IN (1, 3)');
+        } else if (categoryGroup === 'pouches') {
+          conditions.push('p.category_id IN (4, 5)');
+        }
+        if (salesReps.length > 0) {
+          conditions.push('sr.id IN (' + salesReps.map(() => '?').join(',') + ')');
+        }
+        if (startDate) {
+          conditions.push('so.order_date >= ?');
+        }
+        if (endDate) {
+          conditions.push('so.order_date <= ?');
+        }
+        if (clientStatus === 'active') {
+          conditions.push('c.id IN (SELECT DISTINCT client_id FROM sales_orders WHERE order_date >= DATE_SUB(CURDATE(), INTERVAL 45 DAY))');
+        } else if (clientStatus === 'inactive') {
+          conditions.push('c.id NOT IN (SELECT DISTINCT client_id FROM sales_orders WHERE order_date >= DATE_SUB(CURDATE(), INTERVAL 45 DAY))');
+        }
+        return conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+      })()}
+      GROUP BY c.id, c.name
+      ORDER BY c.name
+    `, (() => {
+      const params = [currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, 
+        currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, currentYear];
+      if (categories.length > 0) params.push(...categories);
+      if (salesReps.length > 0) params.push(...salesReps);
+      if (startDate) params.push(startDate);
+      if (endDate) params.push(endDate);
+      return params;
+    })());
+
+    res.json(rows);
+  } catch (err) {
+    console.error('Error fetching master sales data:', err);
+    res.status(500).json({ error: 'Failed to fetch master sales data', details: err.message });
+  }
+};
+
+// Get available categories for master sales filter
+exports.getMasterSalesCategories = async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT DISTINCT cat.id, cat.name
+      FROM Category cat
+      JOIN products p ON cat.id = p.category_id
+      JOIN sales_order_items soi ON p.id = soi.product_id
+      JOIN sales_orders so ON soi.sales_order_id = so.id
+      WHERE so.my_status = 1
+      ORDER BY cat.name
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error('Error fetching categories:', err);
+    res.status(500).json({ error: 'Failed to fetch categories', details: err.message });
+  }
+};
+
+// Get available sales reps for master sales filter
+exports.getMasterSalesSalesReps = async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT DISTINCT sr.id, sr.name
+      FROM SalesRep sr
+      JOIN Clients c ON sr.route_id_update = c.route_id_update
+      JOIN sales_orders so ON c.id = so.client_id
+      WHERE so.my_status = 1
+      ORDER BY sr.name
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error('Error fetching sales reps:', err);
+    res.status(500).json({ error: 'Failed to fetch sales reps', details: err.message });
+  }
+};
+
+// Get sales rep master report
+exports.getSalesRepMasterReport = async (req, res) => {
+  try {
+    console.log('Fetching sales rep master report with params:', req.query);
+    
+    const { year, month, date } = req.query;
+    
+    // Build date filter conditions
+    let dateFilter = '';
+    const params = [];
+    
+    if (date) {
+      dateFilter = 'AND DATE(jp.checkInTime) = ?';
+      params.push(date);
+    } else if (year) {
+      // Fallback to year if no specific date provided
+      dateFilter = 'AND YEAR(jp.checkInTime) = ?';
+      params.push(year);
+      
+      if (month) {
+        dateFilter += ' AND MONTH(jp.checkInTime) = ?';
+        params.push(month);
+      }
+    }
+
+    console.log('Date filter:', dateFilter);
+    console.log('Query params:', params);
+
+    const query = `
+      SELECT 
+        sr.id,
+        sr.name,
+        COALESCE(COUNT(DISTINCT jp.id), 0) as total_journeys,
+        COALESCE(COUNT(DISTINCT CASE WHEN jp.status = 'completed' THEN jp.id END), 0) as completed_journeys,
+        CASE 
+          WHEN COALESCE(COUNT(DISTINCT CASE WHEN jp.status = '3' THEN jp.id END), 0) >= 7 THEN 100
+          WHEN COALESCE(COUNT(DISTINCT jp.id), 0) > 0 
+          THEN ROUND((COALESCE(COUNT(DISTINCT CASE WHEN jp.status = '3' THEN jp.id END), 0) / 7) * 100, 1)
+          ELSE 0 
+        END as completion_rate
+      FROM SalesRep sr
+      LEFT JOIN JourneyPlan jp ON sr.id = jp.userId 
+        ${dateFilter ? dateFilter : ''}
+      GROUP BY sr.id, sr.name
+      ORDER BY sr.name
+    `;
+
+    console.log('Executing query:', query);
+    const [rows] = await db.query(query, params);
+    console.log('Query result:', rows);
+    
+    // Debug: Check if we have any data
+    if (rows.length === 0) {
+      console.log('No sales rep data found. Checking if SalesRep table has data...');
+      const [salesReps] = await db.query('SELECT COUNT(*) as count FROM SalesRep');
+      console.log('SalesRep count:', salesReps[0].count);
+      
+      if (date) {
+        console.log('Checking JourneyPlan data for date:', date);
+        const [journeyData] = await db.query('SELECT COUNT(*) as count FROM JourneyPlan WHERE DATE(checkInTime) = ?', [date]);
+        console.log('JourneyPlan count for date:', journeyData[0].count);
+        
+        // Test query without date filter
+        console.log('Testing query without date filter...');
+        const [testRows] = await db.query(`
+          SELECT 
+            sr.id,
+            sr.name,
+            COALESCE(COUNT(DISTINCT jp.id), 0) as total_journeys,
+            COALESCE(COUNT(DISTINCT CASE WHEN jp.status = 'completed' THEN jp.id END), 0) as completed_journeys
+          FROM SalesRep sr
+          LEFT JOIN JourneyPlan jp ON sr.id = jp.userId 
+          GROUP BY sr.id, sr.name
+          ORDER BY sr.name
+          LIMIT 5
+        `);
+        console.log('Test query result (first 5):', testRows);
+      }
+    }
+
+    res.json(rows);
+  } catch (err) {
+    console.error('Error fetching sales rep master report:', err);
+    console.error('Error details:', {
+      message: err.message,
+      code: err.code,
+      errno: err.errno,
+      sqlState: err.sqlState,
+      sqlMessage: err.sqlMessage
+    });
+    res.status(500).json({ error: 'Failed to fetch sales rep master report', details: err.message });
+  }
+};
+
+// Get journey details for a sales rep
+exports.getJourneyDetails = async (req, res) => {
+  try {
+    console.log('Fetching journey details with params:', req.query);
+    
+    const { salesRepId, date } = req.query;
+    
+    if (!salesRepId) {
+      return res.status(400).json({ error: 'Sales rep ID is required' });
+    }
+
+    let dateFilter = '';
+    const params = [salesRepId];
+    
+    if (date) {
+      dateFilter = 'AND DATE(jp.checkInTime) = ?';
+      params.push(date);
+    }
+
+    console.log('Date filter:', dateFilter);
+    console.log('Query params:', params);
+
+    const query = `
+      SELECT 
+        jp.id,
+        jp.checkInTime,
+        jp.checkOutTime,
+        jp.status,
+        c.name as outlet_name,
+        c.id as client_id
+      FROM JourneyPlan jp
+      LEFT JOIN Clients c ON jp.clientId = c.id
+      WHERE jp.userId = ? 
+        ${dateFilter}
+      ORDER BY jp.checkInTime ASC
+    `;
+
+    console.log('Executing journey details query:', query);
+    const [rows] = await db.query(query, params);
+    console.log('Journey details result:', rows);
+
+    // Debug: Check if we have any data
+    if (rows.length === 0) {
+      console.log('No journey details found. Running debug queries...');
+      
+      // Check if sales rep exists
+      const [salesRepCheck] = await db.query('SELECT id, name FROM SalesRep WHERE id = ?', [salesRepId]);
+      console.log('Sales rep check:', salesRepCheck);
+      
+      // Check total journey plans for this sales rep (no date filter)
+      const [totalJourneys] = await db.query('SELECT COUNT(*) as count FROM JourneyPlan WHERE userId = ?', [salesRepId]);
+      console.log('Total journeys for sales rep:', totalJourneys[0].count);
+      
+      // Check journey plans for the specific date
+      if (date) {
+        const [dateJourneys] = await db.query('SELECT COUNT(*) as count FROM JourneyPlan WHERE userId = ? AND DATE(checkInTime) = ?', [salesRepId, date]);
+        console.log('Journeys for date', date, ':', dateJourneys[0].count);
+        
+        // Check what dates are available for this sales rep
+        const [availableDates] = await db.query('SELECT DISTINCT DATE(checkInTime) as date FROM JourneyPlan WHERE userId = ? ORDER BY date DESC LIMIT 5', [salesRepId]);
+        console.log('Available dates for sales rep:', availableDates);
+        
+        // Try without date filter to see if we get any data
+        console.log('Trying query without date filter...');
+        const [fallbackRows] = await db.query(`
+          SELECT 
+            jp.id,
+            jp.checkInTime,
+            jp.checkOutTime,
+            jp.status,
+            c.name as outlet_name,
+            c.id as client_id
+          FROM JourneyPlan jp
+          LEFT JOIN Clients c ON jp.clientId = c.id
+          WHERE jp.userId = ?
+          ORDER BY jp.checkInTime ASC
+          LIMIT 50
+        `, [salesRepId]);
+        console.log('Fallback query result (first 5):', fallbackRows);
+      }
+      
+      // Check if there are any journey plans at all
+      const [allJourneys] = await db.query('SELECT COUNT(*) as count FROM JourneyPlan');
+      console.log('Total journey plans in database:', allJourneys[0].count);
+      
+            // Check sample journey plan data
+      const [sampleJourney] = await db.query('SELECT * FROM JourneyPlan LIMIT 1');
+      console.log('Sample journey plan:', sampleJourney[0]);
+    }
+
+    res.json(rows);
+  } catch (err) {
+    console.error('Error fetching journey details:', err);
+    console.error('Error details:', {
+      message: err.message,
+      code: err.code,
+      errno: err.errno,
+      sqlState: err.sqlState,
+      sqlMessage: err.sqlMessage
+    });
+    res.status(500).json({ error: 'Failed to fetch journey details', details: err.message });
+  }
+};
+
+// Get reports for a sales rep and client
+exports.getSalesRepReports = async (req, res) => {
+  try {
+    console.log('Fetching sales rep reports with params:', req.query);
+    
+    const { salesRepId, clientId, date } = req.query;
+    
+    if (!salesRepId || !clientId) {
+      return res.status(400).json({ error: 'Sales rep ID and client ID are required' });
+    }
+
+    let dateFilter = '';
+    const params = [salesRepId, clientId];
+    
+    if (date) {
+      dateFilter = 'AND DATE(createdAt) = ?';
+      params.push(date);
+    }
+
+    console.log('Date filter:', dateFilter);
+    console.log('Query params:', params);
+
+    // Get visibility reports
+    const visibilityQuery = `
+      SELECT 
+        id,
+        'visibility' as report_type,
+        createdAt,
+        comment as notes,
+        imageUrl
+      FROM VisibilityReport 
+      WHERE userId = ? AND clientId = ? 
+        ${dateFilter}
+      ORDER BY createdAt DESC
+    `;
+
+    // Get feedback reports
+    const feedbackQuery = `
+      SELECT 
+        id,
+        'feedback' as report_type,
+        createdAt,
+        comment as notes
+      FROM FeedbackReport 
+      WHERE userId = ? AND clientId = ? 
+        ${dateFilter}
+      ORDER BY createdAt DESC
+    `;
+
+    console.log('Executing visibility reports query:', visibilityQuery);
+    const [visibilityReports] = await db.query(visibilityQuery, params);
+    console.log('Visibility reports result:', visibilityReports);
+
+    console.log('Executing feedback reports query:', feedbackQuery);
+    const [feedbackReports] = await db.query(feedbackQuery, params);
+    console.log('Feedback reports result:', feedbackReports);
+
+    // Combine and sort all reports by creation date
+    const allReports = [...visibilityReports, ...feedbackReports].sort((a, b) => 
+      new Date(b.createdAt) - new Date(a.createdAt)
+    );
+
+    res.json({
+      visibility_reports: visibilityReports,
+      feedback_reports: feedbackReports,
+      all_reports: allReports
+    });
+  } catch (err) {
+    console.error('Error fetching sales rep reports:', err);
+    console.error('Error details:', {
+      message: err.message,
+      code: err.code,
+      errno: err.errno,
+      sqlState: err.sqlState,
+      sqlMessage: err.sqlMessage
+    });
+    res.status(500).json({ error: 'Failed to fetch sales rep reports', details: err.message });
+  }
+};

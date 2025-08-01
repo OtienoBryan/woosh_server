@@ -115,6 +115,7 @@ CREATE TABLE sales_orders (
     id INT PRIMARY KEY AUTO_INCREMENT,
     so_number VARCHAR(20) UNIQUE NOT NULL,
     customer_id INT NOT NULL,
+    sales_rep_id INT,
     order_date DATE NOT NULL,
     expected_delivery_date DATE,
     status ENUM('draft', 'confirmed', 'shipped', 'delivered', 'cancelled') DEFAULT 'draft',
@@ -122,10 +123,12 @@ CREATE TABLE sales_orders (
     tax_amount DECIMAL(15,2) DEFAULT 0,
     total_amount DECIMAL(15,2) DEFAULT 0,
     notes TEXT,
+    my_status TINYINT DEFAULT 0,
     created_by INT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (customer_id) REFERENCES customers(id),
+    FOREIGN KEY (sales_rep_id) REFERENCES SalesRep(id),
     FOREIGN KEY (created_by) REFERENCES users(id)
 );
 

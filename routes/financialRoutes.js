@@ -36,7 +36,8 @@ const {
   getAllAssetsWithDepreciation,
   getAssetsTotalValue,
   getAllExpenses,
-  createJournalEntry
+  createJournalEntry,
+  getProductsSaleReport
 } = require('../controllers/financialController');
 const purchaseOrderController = require('../controllers/purchaseOrderController');
 const storeController = require('../controllers/storeController');
@@ -143,6 +144,7 @@ router.get('/reports/profit-loss', reportsController.getProfitLossReport);
 router.get('/reports/balance-sheet', reportsController.getBalanceSheetReport);
 router.get('/reports/cash-flow', reportsController.getCashFlowReport);
 router.get('/reports/product-performance', reportsController.getProductPerformanceReport);
+router.get('/products-sale-report', getProductsSaleReport);
 router.get('/journal-entry-lines/:account_id', reportsController.getJournalEntriesForAccount);
 router.get('/journal-entries/invoice/:invoice_id', reportsController.getJournalEntriesForInvoice);
 

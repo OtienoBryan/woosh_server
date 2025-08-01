@@ -3,44 +3,51 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
-const db = require('./database/db');
-const staffController = require('./controllers/staffController');
-const roleController = require('./controllers/roleController');
-const multer = require('multer');
-const upload = multer({ dest: 'uploads/' });
-const uploadController = require('./controllers/uploadController');
-const teamController = require('./controllers/teamController');
-const clientController = require('./controllers/clientController');
-const branchController = require('./controllers/branchController');
-const serviceChargeController = require('./controllers/serviceChargeController');
-const journeyPlanController = require('./controllers/journeyPlanController');
-const payrollRoutes = require('./routes/payrollRoutes');
-
-const financialRoutes = require('./routes/financialRoutes');
-const staffRoutes = require('./routes/staffRoutes');
-const chatRoutes = require('./routes/chatRoutes');
 const http = require('http');
 const { Server } = require('socket.io');
 require('dotenv').config();
-const clientRoutes = require('./routes/clientRoutes');
-const salesRoutes = require('./routes/salesRoutes');
-const managerRoutes = require('./routes/managerRoutes');
-const noticeRoutes = require('./routes/noticeRoutes');
-const salesRepLeaveRoutes = require('./routes/leaveRoutes');
-const calendarTaskRoutes = require('./routes/calendarTaskRoutes');
-const userRoutes = require('./routes/userRoutes');
-const loginHistoryRoutes = require('./routes/loginHistoryRoutes');
-const journeyPlanRoutes = require('./routes/journeyPlanRoutes');
-const riderRoutes = require('./routes/riderRoutes');
-const myVisibilityReportRoutes = require('./routes/myVisibilityReportRoutes');
-const feedbackReportRoutes = require('./routes/feedbackReportRoutes');
-const availabilityReportRoutes = require('./routes/availabilityReportRoutes');
-const leaveRequestRoutes = require('./routes/leaveRequestRoutes');
-const supplierRoutes = require('./routes/supplierRoutes');
-const receiptRoutes = require('./routes/receiptRoutes');
-const myAssetsRoutes = require('./routes/myAssetsRoutes');
-const faultyProductsRoutes = require('./routes/faultyProductsRoutes');
-const storeRoutes = require('./routes/storeRoutes');
+
+// Try to require database and other modules, but don't crash if they fail
+let db, staffController, roleController, multer, upload, uploadController, teamController, clientController, branchController, serviceChargeController, journeyPlanController, payrollRoutes, financialRoutes, staffRoutes, chatRoutes, clientRoutes, salesRoutes, managerRoutes, noticeRoutes, salesRepLeaveRoutes, calendarTaskRoutes, userRoutes, loginHistoryRoutes, journeyPlanRoutes, riderRoutes, myVisibilityReportRoutes, feedbackReportRoutes, availabilityReportRoutes, leaveRequestRoutes, supplierRoutes, receiptRoutes, myAssetsRoutes, faultyProductsRoutes, storeRoutes;
+
+try {
+  db = require('./database/db');
+  staffController = require('./controllers/staffController');
+  roleController = require('./controllers/roleController');
+  multer = require('multer');
+  upload = multer({ dest: 'uploads/' });
+  uploadController = require('./controllers/uploadController');
+  teamController = require('./controllers/teamController');
+  clientController = require('./controllers/clientController');
+  branchController = require('./controllers/branchController');
+  serviceChargeController = require('./controllers/serviceChargeController');
+  journeyPlanController = require('./controllers/journeyPlanController');
+  payrollRoutes = require('./routes/payrollRoutes');
+  financialRoutes = require('./routes/financialRoutes');
+  staffRoutes = require('./routes/staffRoutes');
+  chatRoutes = require('./routes/chatRoutes');
+  clientRoutes = require('./routes/clientRoutes');
+  salesRoutes = require('./routes/salesRoutes');
+  managerRoutes = require('./routes/managerRoutes');
+  noticeRoutes = require('./routes/noticeRoutes');
+  salesRepLeaveRoutes = require('./routes/leaveRoutes');
+  calendarTaskRoutes = require('./routes/calendarTaskRoutes');
+  userRoutes = require('./routes/userRoutes');
+  loginHistoryRoutes = require('./routes/loginHistoryRoutes');
+  journeyPlanRoutes = require('./routes/journeyPlanRoutes');
+  riderRoutes = require('./routes/riderRoutes');
+  myVisibilityReportRoutes = require('./routes/myVisibilityReportRoutes');
+  feedbackReportRoutes = require('./routes/feedbackReportRoutes');
+  availabilityReportRoutes = require('./routes/availabilityReportRoutes');
+  leaveRequestRoutes = require('./routes/leaveRequestRoutes');
+  supplierRoutes = require('./routes/supplierRoutes');
+  receiptRoutes = require('./routes/receiptRoutes');
+  myAssetsRoutes = require('./routes/myAssetsRoutes');
+  faultyProductsRoutes = require('./routes/faultyProductsRoutes');
+  storeRoutes = require('./routes/storeRoutes');
+} catch (error) {
+  console.log('Some modules failed to load:', error.message);
+}
 
 const app = express();
 
@@ -54,11 +61,58 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 
-// Register /api/riders route before any parameterized routes
-app.use('/api/riders', riderRoutes);
+// Global error handler to prevent crashes
+app.use((err, req, res, next) => {
+  console.error('Error:', err);
+  res.status(500).json({ 
+    error: 'Internal server error', 
+    message: err.message,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Health check endpoint (no database required)
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    message: 'Server is running', 
+    timestamp: new Date().toISOString() 
+  });
+});
+
+// Test endpoint
+app.get('/api/test', (req, res) => {
+  res.json({ message: 'API is working!', timestamp: new Date().toISOString() });
+});
+
+// Debug endpoint to check environment variables
+app.get('/api/debug', (req, res) => {
+  res.json({
+    message: 'Debug info',
+    timestamp: new Date().toISOString(),
+    nodeEnv: process.env.NODE_ENV,
+    hasDbHost: !!process.env.DB_HOST,
+    hasDbUser: !!process.env.DB_USER,
+    hasDbPassword: !!process.env.DB_PASSWORD,
+    hasDbName: !!process.env.DB_NAME,
+    hasJwtSecret: !!process.env.JWT_SECRET,
+    envVars: Object.keys(process.env).filter(key => key.startsWith('DB_') || key.startsWith('JWT_') || key.startsWith('CLOUDINARY_')),
+    modulesLoaded: {
+      db: !!db,
+      staffController: !!staffController,
+      riderRoutes: !!riderRoutes,
+      financialRoutes: !!financialRoutes
+    }
+  });
+});
 
 // Middleware
 app.use(express.json());
+
+// Only register routes if modules loaded successfully
+if (riderRoutes) {
+  app.use('/api/riders', riderRoutes);
+}
 
 // Serve static files from uploads directory
 app.use('/uploads', express.static('uploads'));

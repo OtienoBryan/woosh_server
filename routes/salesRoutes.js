@@ -63,4 +63,22 @@ router.post('/sales-reps/:id/manager-assignments', salesController.setManagerAss
 // Get sales rep performance data
 router.get('/performance', salesController.getSalesRepPerformance);
 
+// Get master sales data for all clients by year
+router.get('/master-sales', salesController.getMasterSalesData);
+
+// Get available categories for master sales filter
+router.get('/master-sales/categories', salesController.getMasterSalesCategories);
+
+// Get available sales reps for master sales filter
+router.get('/master-sales/sales-reps', salesController.getMasterSalesSalesReps);
+
+// Get sales rep master report
+router.get('/rep/master-report', salesController.getSalesRepMasterReport);
+
+// Get journey details for a sales rep
+router.get('/rep/journey-details', salesController.getJourneyDetails);
+
+// Get reports for a sales rep and client
+router.get('/rep/reports', salesController.getSalesRepReports);
+
 module.exports = router; 

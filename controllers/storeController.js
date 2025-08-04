@@ -257,6 +257,68 @@ const storeController = {
     }
   },
 
+  // Get stock summary for all products across all stores
+  getStockSummary: async (req, res) => {
+    try {
+      // First, get all active stores and products
+      const [stores] = await connection.query(`
+        SELECT id, store_name, store_code 
+        FROM stores 
+        WHERE is_active = true 
+        ORDER BY store_name
+      `);
+      
+      const [products] = await connection.query(`
+        SELECT id, product_name, product_code, category 
+        FROM products 
+        WHERE is_active = true 
+        ORDER BY product_name
+      `);
+      
+      // Get all inventory data
+      const [inventory] = await connection.query(`
+        SELECT store_id, product_id, quantity 
+        FROM store_inventory 
+        WHERE store_id IN (${stores.map(s => s.id).join(',')}) 
+        AND product_id IN (${products.map(p => p.id).join(',')})
+      `);
+      
+      // Create a map for quick lookup
+      const inventoryMap = new Map();
+      inventory.forEach(item => {
+        const key = `${item.store_id}-${item.product_id}`;
+        inventoryMap.set(key, item.quantity);
+      });
+      
+      // Build the response data
+      const stockSummary = {
+        stores: stores,
+        products: products.map(product => {
+          const productData = {
+            id: product.id,
+            product_name: product.product_name,
+            product_code: product.product_code,
+            category: product.category,
+            store_quantities: {}
+          };
+          
+          // Add quantities for each store
+          stores.forEach(store => {
+            const key = `${store.id}-${product.id}`;
+            productData.store_quantities[store.id] = inventoryMap.get(key) || 0;
+          });
+          
+          return productData;
+        })
+      };
+      
+      res.json({ success: true, data: stockSummary });
+    } catch (error) {
+      console.error('Error fetching stock summary:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch stock summary' });
+    }
+  },
+
   // Get inventory summary by store
   getInventorySummaryByStore: async (req, res) => {
     try {
@@ -616,6 +678,123 @@ const storeController = {
     } catch (error) {
       console.error('Error fetching stock take items:', error);
       res.status(500).json({ success: false, error: 'Failed to fetch stock take items' });
+    }
+  },
+
+  // Update stock quantity directly
+  updateStockQuantity: async (req, res) => {
+    const dbConnection = await connection.getConnection();
+    try {
+      await dbConnection.beginTransaction();
+      const { store_id, product_id, new_quantity, reason, staff_id } = req.body;
+
+      // Validation
+      if (!store_id || !product_id || new_quantity === undefined || new_quantity < 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'store_id, product_id, and new_quantity are required. new_quantity must be >= 0'
+        });
+      }
+
+      // Check if store exists
+      const [storeExists] = await dbConnection.query(
+        'SELECT id FROM stores WHERE id = ?',
+        [store_id]
+      );
+      if (storeExists.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Store not found'
+        });
+      }
+
+      // Check if product exists
+      const [productExists] = await dbConnection.query(
+        'SELECT id FROM products WHERE id = ?',
+        [product_id]
+      );
+      if (productExists.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Product not found'
+        });
+      }
+
+      // Get current quantity
+      const [currentInventory] = await dbConnection.query(
+        'SELECT quantity FROM store_inventory WHERE store_id = ? AND product_id = ?',
+        [store_id, product_id]
+      );
+      const currentQuantity = currentInventory.length > 0 ? Number(currentInventory[0].quantity) : 0;
+
+      // Calculate difference
+      const difference = new_quantity - currentQuantity;
+
+      if (difference === 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'New quantity is the same as current quantity'
+        });
+      }
+
+      // Update store_inventory
+      if (currentInventory.length > 0) {
+        await dbConnection.query(
+          'UPDATE store_inventory SET quantity = ?, updated_at = NOW() WHERE store_id = ? AND product_id = ?',
+          [new_quantity, store_id, product_id]
+        );
+      } else {
+        await dbConnection.query(
+          'INSERT INTO store_inventory (store_id, product_id, quantity, updated_at) VALUES (?, ?, ?, NOW())',
+          [store_id, product_id, new_quantity]
+        );
+      }
+
+      // Record in inventory_transactions
+      const [lastTrans] = await dbConnection.query(
+        'SELECT balance FROM inventory_transactions WHERE product_id = ? AND store_id = ? ORDER BY date_received DESC, id DESC LIMIT 1',
+        [product_id, store_id]
+      );
+      const prevBalance = lastTrans.length > 0 ? parseFloat(lastTrans[0].balance) : currentQuantity;
+      const newBalance = new_quantity;
+
+      await dbConnection.query(
+        `INSERT INTO inventory_transactions 
+          (product_id, reference, amount_in, amount_out, balance, date_received, store_id, staff_id)
+         VALUES (?, ?, ?, ?, ?, NOW(), ?, ?)`,
+        [
+          product_id, 
+          reason || 'Manual Stock Update', 
+          difference > 0 ? difference : 0, 
+          difference < 0 ? -difference : 0, 
+          newBalance, 
+          store_id, 
+          staff_id || 1
+        ]
+      );
+
+      await dbConnection.commit();
+
+      res.json({
+        success: true,
+        message: 'Stock quantity updated successfully',
+        data: {
+          store_id,
+          product_id,
+          previous_quantity: currentQuantity,
+          new_quantity,
+          difference
+        }
+      });
+    } catch (error) {
+      await dbConnection.rollback();
+      console.error('Error updating stock quantity:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to update stock quantity'
+      });
+    } finally {
+      dbConnection.release();
     }
   }
 };

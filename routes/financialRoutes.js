@@ -119,6 +119,7 @@ router.get('/stores/:id', storeController.getStoreById);
 router.get('/stores/:storeId/inventory', storeController.getStoreInventory);
 router.get('/stores-inventory', storeController.getAllStoresInventory);
 router.get('/inventory-summary', storeController.getInventorySummaryByStore);
+router.get('/stock-summary', storeController.getStockSummary);
 
 // Payables Routes
 router.get('/payables/aging', payablesController.getAgingPayables);
@@ -192,6 +193,7 @@ router.get('/transfer-history', storeController.getTransferHistory);
 router.post('/stock-take', storeController.recordStockTake);
 router.get('/stock-take-history', storeController.getStockTakeHistory);
 router.get('/stock-take/:stock_take_id/items', storeController.getStockTakeItems);
+router.post('/stores/update-stock-quantity', storeController.updateStockQuantity);
 
 router.get('/categories', getAllCategories);
 router.post('/categories', addCategory);

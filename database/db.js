@@ -12,7 +12,7 @@ const pool = mysql.createPool({
   acquireTimeout: 60000, // 60 seconds
   timeout: 60000, // 60 seconds
   reconnect: true,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  ssl: false // Temporarily disable SSL to test connection
 });
 
 // Test database connection

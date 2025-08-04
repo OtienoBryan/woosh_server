@@ -8,25 +8,11 @@
   ],
   "routes": [
     {
-      "src": "/api/(.*)",
-      "dest": "/api/index.js"
-    },
-    {
-      "src": "/uploads/(.*)",
-      "dest": "/api/index.js"
-    },
-    {
       "src": "/(.*)",
       "dest": "/api/index.js"
     }
   ],
-  "functions": {
-    "api/index.js": {
-      "maxDuration": 30
-    }
-  },
   "env": {
-    "NODE_ENV": "production",
-    "FRONTEND_URL": "https://woosh-client.vercel.app"
+    "NODE_ENV": "production"
   }
-}
+} 

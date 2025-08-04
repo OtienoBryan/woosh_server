@@ -1,10 +1,11 @@
 const axios = require('axios');
+require('dotenv').config();
 
 async function testBalanceSheetAPI() {
   try {
     console.log('=== TESTING BALANCE SHEET API ===\n');
     
-    const API_BASE_URL = 'http://localhost:5000/api';
+    const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:5000/api';
     
     // Test with current date
     const today = new Date().toISOString().split('T')[0];

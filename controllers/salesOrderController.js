@@ -93,7 +93,7 @@ const salesOrderController = {
         FROM sales_orders so
         LEFT JOIN Clients c ON so.client_id = c.id
         LEFT JOIN users u ON so.created_by = u.id
-        LEFT JOIN SalesRep sr ON so.sales_rep_id = sr.id
+        LEFT JOIN SalesRep sr ON so.salesrep = sr.id
         WHERE so.id = ?
       `, [id]);
       if (salesOrders.length === 0) {

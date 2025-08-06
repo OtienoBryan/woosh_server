@@ -94,6 +94,7 @@ router.post('/purchase-orders/:purchaseOrderId/receive', purchaseOrderController
 
 // Sales Orders Routes
 router.get('/sales-orders', salesOrderController.getAllSalesOrders);
+router.get('/sales-orders-all', salesOrderController.getAllSalesOrdersIncludingDrafts);
 router.get('/sales-orders/:id', salesOrderController.getSalesOrderById);
 router.post('/sales-orders', (req, res, next) => {
   console.log('=== SALES ORDERS ROUTE HIT ===');

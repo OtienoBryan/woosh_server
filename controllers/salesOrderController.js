@@ -18,6 +18,7 @@ const salesOrderController = {
         SELECT 
           so.*, 
           c.name as customer_name, 
+          c.balance as customer_balance,
           u.full_name as created_by_name,
           sr.name as salesrep
         FROM sales_orders so
@@ -74,6 +75,86 @@ const salesOrderController = {
     }
   },
 
+  // Get all sales orders (including draft orders with my_status = 0)
+  getAllSalesOrdersIncludingDrafts: async (req, res) => {
+    try {
+      console.log('Fetching all sales orders (including drafts)...');
+      
+      // First, let's check how many sales orders exist in total
+      const [totalOrders] = await db.query('SELECT COUNT(*) as total FROM sales_orders');
+      console.log('Total sales orders in database:', totalOrders[0].total);
+      
+      // Check how many have my_status = 0 (drafts)
+      const [draftOrders] = await db.query('SELECT COUNT(*) as drafts FROM sales_orders WHERE my_status = 0');
+      console.log('Sales orders with my_status = 0 (drafts):', draftOrders[0].drafts);
+      
+      // Check how many have my_status = 1 (confirmed)
+      const [confirmedOrders] = await db.query('SELECT COUNT(*) as confirmed FROM sales_orders WHERE my_status = 1');
+      console.log('Sales orders with my_status = 1 (confirmed):', confirmedOrders[0].confirmed);
+      
+      const [rows] = await db.query(`
+        SELECT 
+          so.*, 
+          c.name as customer_name, 
+          c.balance as customer_balance,
+          u.full_name as created_by_name,
+          sr.name as salesrep,
+          r.name as rider_name,
+          r.contact as rider_contact
+        FROM sales_orders so
+        LEFT JOIN Clients c ON so.client_id = c.id
+        LEFT JOIN users u ON so.created_by = u.id
+        LEFT JOIN SalesRep sr ON so.salesrep = sr.id
+        LEFT JOIN Riders r ON so.rider_id = r.id
+        ORDER BY so.created_at DESC
+      `);
+      
+      console.log('Query result rows:', rows.length);
+      if (rows.length > 0) {
+        console.log('Sample order:', rows[0]);
+      }
+      
+      // Get items for each sales order
+      for (let order of rows) {
+        const [items] = await db.query(`
+          SELECT 
+            soi.*, 
+            p.product_name, 
+            p.product_code, 
+            p.unit_of_measure
+          FROM sales_order_items soi
+          LEFT JOIN products p ON soi.product_id = p.id
+          WHERE soi.sales_order_id = ?
+        `, [order.id]);
+        
+        // Map product fields into a product object for each item
+        order.items = items.map(item => ({
+          id: item.id,
+          sales_order_id: item.sales_order_id,
+          product_id: item.product_id,
+          quantity: item.quantity,
+          unit_price: parseFloat(item.unit_price),
+          total_price: parseFloat(item.total_price),
+          tax_type: item.tax_type,
+          tax_amount: parseFloat(item.tax_amount),
+          net_price: parseFloat(item.net_price),
+          product: {
+            id: item.product_id,
+            product_name: item.product_name || `Product ${item.product_id}`,
+            product_code: item.product_code || 'No Code',
+            unit_of_measure: item.unit_of_measure || 'PCS'
+          }
+        }));
+      }
+      
+      console.log('Final response data length:', rows.length);
+      res.json({ success: true, data: rows });
+    } catch (error) {
+      console.error('Error fetching all sales orders:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch all sales orders' });
+    }
+  },
+
   // Get sales order by ID
   getSalesOrderById: async (req, res) => {
     try {
@@ -89,11 +170,14 @@ const salesOrderController = {
           c.address,
           c.tax_pin,
           u.full_name as created_by_name,
-          sr.name as salesrep
+          sr.name as salesrep,
+          r.name as rider_name,
+          r.contact as rider_contact
         FROM sales_orders so
         LEFT JOIN Clients c ON so.client_id = c.id
         LEFT JOIN users u ON so.created_by = u.id
         LEFT JOIN SalesRep sr ON so.salesrep = sr.id
+        LEFT JOIN Riders r ON so.rider_id = r.id
         WHERE so.id = ?
       `, [id]);
       if (salesOrders.length === 0) {
@@ -149,7 +233,7 @@ const salesOrderController = {
       console.log('Request body:', JSON.stringify(req.body, null, 2));
       
       await connection.beginTransaction();
-      const { customer_id, client_id, order_date, expected_delivery_date, notes, items } = req.body;
+      const { customer_id, client_id, sales_rep_id, order_date, expected_delivery_date, notes, items } = req.body;
       
       // Use either customer_id or client_id (for compatibility)
       const clientId = client_id || customer_id;
@@ -204,10 +288,10 @@ const salesOrderController = {
       console.log('Creating order in sales_orders table...');
       const [soResult] = await connection.query(`
         INSERT INTO sales_orders (
-          so_number, client_id, order_date, expected_delivery_date, 
+          so_number, client_id, salesrep, order_date, expected_delivery_date, 
           notes, status, total_amount, created_by, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, NOW(), NOW())
-      `, [soNumber, clientIdToUse, order_date, expected_delivery_date, notes, totalAmount, 1]);
+        ) VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, NOW(), NOW())
+      `, [soNumber, clientIdToUse, sales_rep_id, order_date, expected_delivery_date, notes, totalAmount, 1]);
       const salesOrderId = soResult.insertId;
       console.log('Order created with ID:', salesOrderId);
       
@@ -286,7 +370,7 @@ const salesOrderController = {
     try {
       await connection.beginTransaction();
       const { id } = req.params;
-      const { customer_id, client_id, order_date, expected_delivery_date, notes, status, items } = req.body;
+      const { customer_id, client_id, sales_rep_id, order_date, expected_delivery_date, notes, status, items } = req.body;
       
       // Get the current user ID from the request
       const currentUserId = req.user?.id || 1; // Default to user ID 1 if not available
@@ -326,6 +410,7 @@ const salesOrderController = {
       await connection.query(`
         UPDATE sales_orders 
         SET client_id = ?, 
+            sales_rep_id = COALESCE(?, sales_rep_id),
             order_date = COALESCE(?, order_date), 
             expected_delivery_date = ?, 
             status = ?,
@@ -334,7 +419,7 @@ const salesOrderController = {
             notes = COALESCE(?, notes),
             updated_at = NOW()
         WHERE id = ?
-      `, [clientId, order_date, expected_delivery_date, statusString, myStatus, totalAmount, notes, id]);
+      `, [clientId, sales_rep_id, order_date, expected_delivery_date, statusString, myStatus, totalAmount, notes, id]);
       
       // Delete existing items
       await connection.query('DELETE FROM sales_order_items WHERE sales_order_id = ?', [id]);
@@ -485,8 +570,8 @@ const salesOrderController = {
   deleteSalesOrder: async (req, res) => {
     try {
       const { id } = req.params;
-              await db.query('DELETE FROM my_order_items WHERE my_order_id = ?', [id]);
-      const [result] = await db.query('DELETE FROM my_order WHERE id = ?', [id]);
+      await db.query('DELETE FROM sales_order_items WHERE sales_order_id = ?', [id]);
+      const [result] = await db.query('DELETE FROM sales_orders WHERE id = ?', [id]);
       if (result.affectedRows === 0) {
         return res.status(404).json({ success: false, error: 'Sales order not found' });
       }
@@ -506,13 +591,15 @@ const salesOrderController = {
         return res.status(400).json({ success: false, error: 'riderId is required' });
       }
       // Check if sales order exists
-      const [existingSO] = await db.query('SELECT id FROM my_order WHERE id = ?', [id]);
+      const [existingSO] = await db.query('SELECT id FROM sales_orders WHERE id = ?', [id]);
       if (existingSO.length === 0) {
         return res.status(404).json({ success: false, error: 'Sales order not found' });
       }
-      // Update the sales order with the rider ID, set my_status to 2, and assigned_at to now
+      // Get the current user ID from the request
+      const currentUserId = req.user?.id || 1; // Default to user ID 1 if not available
+      // Update the sales order with the rider ID, set my_status to 2, assigned_at to now, and dispatched_by to current user
       const now = new Date();
-              await db.query('UPDATE my_order SET rider_id = ?, my_status = 2, assigned_at = ? WHERE id = ?', [riderId, now, id]);
+      await db.query('UPDATE sales_orders SET rider_id = ?, my_status = 2, assigned_at = ?, dispatched_by = ? WHERE id = ?', [riderId, now, currentUserId, id]);
       res.json({ success: true, message: 'Rider assigned successfully' });
     } catch (error) {
       console.error('Error assigning rider:', error);
@@ -529,9 +616,9 @@ const salesOrderController = {
           p.product_name, 
           p.product_code, 
           p.unit_of_measure
-        FROM my_order_items soi
+        FROM sales_order_items soi
         LEFT JOIN products p ON soi.product_id = p.id
-        WHERE soi.my_order_id = ?
+        WHERE soi.sales_order_id = ?
       `, [id]);
       // Map product fields into a product object for each item
       const mappedItems = items.map(item => ({
@@ -555,7 +642,7 @@ const salesOrderController = {
     const { id } = req.params;
     try {
       // Check if the order exists and is cancelled
-      const [orders] = await db.query('SELECT * FROM my_order WHERE id = ?', [id]);
+      const [orders] = await db.query('SELECT * FROM sales_orders WHERE id = ?', [id]);
       if (!orders.length) {
         return res.status(404).json({ success: false, error: 'Sales order not found' });
       }
@@ -564,7 +651,7 @@ const salesOrderController = {
         return res.status(400).json({ success: false, error: 'Order is not cancelled' });
       }
       // Get all items in the order
-      const [items] = await db.query('SELECT product_id, quantity FROM my_order_items WHERE my_order_id = ?', [id]);
+      const [items] = await db.query('SELECT product_id, quantity FROM sales_order_items WHERE sales_order_id = ?', [id]);
       if (!items.length) {
         return res.status(400).json({ success: false, error: 'No items found for this order' });
       }
@@ -573,7 +660,7 @@ const salesOrderController = {
         await db.query('UPDATE products SET current_stock = current_stock + ? WHERE id = ?', [item.quantity, item.product_id]);
       }
       // Optionally, log the action or mark the order as returned
-              await db.query('UPDATE my_order SET returned_to_stock = 1 WHERE id = ?', [id]);
+      await db.query('UPDATE sales_orders SET returned_to_stock = 1 WHERE id = ?', [id]);
       res.json({ success: true, message: 'Items received back to stock.' });
     } catch (error) {
       console.error('Error receiving items back to stock:', error);

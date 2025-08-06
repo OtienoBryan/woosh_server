@@ -34,7 +34,7 @@ const app = express();
 
 // CORS configuration
 const corsOptions = {
-  origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : [
+  origin: [
     'https://moonsunclient.vercel.app',
     'https://moonsunclient-obzh7s26i-bryan-otienos-projects.vercel.app',
     'https://moonsunclient-5ui6x3b92-bryan-otienos-projects.vercel.app',

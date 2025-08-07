@@ -9,7 +9,7 @@ const creditNoteController = {
           cn.*,
           c.name as customer_name,
           c.email,
-          c.phone,
+          c.contact,
           c.address
         FROM credit_notes cn
         LEFT JOIN Clients c ON cn.customer_id = c.id
@@ -31,7 +31,7 @@ const creditNoteController = {
           cn.*,
           c.name as customer_name,
           c.email,
-          c.phone,
+          c.contact,
           c.address
         FROM credit_notes cn
         LEFT JOIN Clients c ON cn.customer_id = c.id

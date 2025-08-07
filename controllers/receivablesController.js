@@ -34,13 +34,29 @@ const receivablesController = {
       await connection.beginTransaction();
       const { customer_id, amount, payment_date, payment_method, notes, account_id, reference, invoice_id } = req.body;
 
+      // Get invoice number if invoice_id is provided
+      let invoiceNumber = null;
+      if (invoice_id) {
+        const [invoiceResult] = await connection.query(
+          'SELECT so_number FROM sales_orders WHERE id = ?',
+          [invoice_id]
+        );
+        if (invoiceResult.length > 0) {
+          // Extract numeric part from so_number (e.g., "INV-123-456" -> 123)
+          const soNumber = invoiceResult[0].so_number;
+          const numericMatch = soNumber.match(/\d+/);
+          invoiceNumber = numericMatch ? parseInt(numericMatch[0]) : null;
+        }
+      }
+
       // Insert receipt record
       const [receiptResult] = await connection.query(
-        `INSERT INTO receipts (receipt_number, customer_id, receipt_date, payment_method, amount, notes, created_by, account_id, reference, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'in pay')`,
+        `INSERT INTO receipts (receipt_number, client_id, invoice_number, receipt_date, payment_method, amount, notes, created_by, account_id, reference, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'in pay')`,
         [
           `RCP-${customer_id}-${Date.now()}`,
           customer_id,
+          invoiceNumber,
           payment_date,
           payment_method,
           amount,
@@ -52,34 +68,9 @@ const receivablesController = {
       );
       const receiptId = receiptResult.insertId;
 
-      // Get last running balance for the account
-      const [lastAccountLedger] = await connection.query(
-        'SELECT running_balance FROM account_ledger WHERE account_id = ? ORDER BY date DESC, id DESC LIMIT 1',
-        [account_id]
-      );
-      const prevAccountBalance = lastAccountLedger.length > 0 ? parseFloat(lastAccountLedger[0].running_balance) : 0;
-      const newAccountBalance = prevAccountBalance + amount; // Debit increases cash/bank
+      // Note: Account ledger entries and journal entries will be created only when payment is confirmed
 
-      // Insert into account_ledger (debit, increases cash/bank)
-      await connection.query(
-        `INSERT INTO account_ledger (account_id, date, description, reference_type, reference_id, debit, credit, running_balance, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'in pay')`,
-        [
-          account_id,
-          payment_date,
-          `Customer payment`,
-          'receipt',
-          receiptId,
-          amount,
-          0,
-          prevAccountBalance, // Keep the previous balance until confirmed
-          'in pay'
-        ]
-      );
-
-      // Note: Journal entries will be created only when payment is confirmed
-
-      // If this payment is for a specific invoice, update the invoice status and create customer ledger entry
+      // If this payment is for a specific invoice, update the invoice status
       if (invoice_id) {
         console.log('Updating invoice status to "in payment" for invoice ID:', invoice_id);
         await connection.query(
@@ -93,29 +84,6 @@ const receivablesController = {
           [invoice_id]
         );
         console.log('Invoice status after update:', updatedInvoice[0]?.status);
-
-        // Create customer ledger entry linking the receipt to the invoice
-        const [lastCustomerLedger] = await connection.query(
-          'SELECT running_balance FROM client_ledger WHERE customer_id = ? ORDER BY date DESC, id DESC LIMIT 1',
-          [customer_id]
-        );
-        const prevCustomerBalance = lastCustomerLedger.length > 0 ? parseFloat(lastCustomerLedger[0].running_balance) : 0;
-        const newCustomerBalance = prevCustomerBalance - amount;
-
-        await connection.query(
-          `INSERT INTO client_ledger (customer_id, date, description, reference_type, reference_id, debit, credit, running_balance)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            customer_id,
-            payment_date,
-            `Payment for invoice - ${reference || receiptId}`,
-            'receipt',
-            receiptId,
-            0,
-            amount,
-            newCustomerBalance
-          ]
-        );
       }
 
       await connection.commit();
@@ -154,65 +122,62 @@ const receivablesController = {
         [receipt_id]
       );
 
-      // Update account_ledger status and recalculate running balance
-      const [accountLedgerEntry] = await connection.query(
-        'SELECT * FROM account_ledger WHERE reference_type = ? AND reference_id = ?',
-        ['receipt', receipt_id]
+      // Create account ledger entry for the confirmed payment
+      const [lastAccountLedger] = await connection.query(
+        'SELECT running_balance FROM account_ledger WHERE account_id = ? ORDER BY date DESC, id DESC LIMIT 1',
+        [receipt.account_id]
       );
-      
-      if (accountLedgerEntry.length > 0) {
-        const entry = accountLedgerEntry[0];
+      const prevAccountBalance = lastAccountLedger.length > 0 ? parseFloat(lastAccountLedger[0].running_balance) : 0;
+      const newAccountBalance = prevAccountBalance + receipt.amount; // Debit increases cash/bank
+
+      // Insert into account_ledger (debit, increases cash/bank)
+      const [accountLedgerResult] = await connection.query(
+        `INSERT INTO account_ledger (account_id, date, description, reference_type, reference_id, debit, credit, running_balance, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed')`,
+        [
+          receipt.account_id,
+          receipt.receipt_date,
+          `Customer payment ${receipt.receipt_number}`,
+          'receipt',
+          receipt_id,
+          receipt.amount,
+          0,
+          newAccountBalance,
+          'confirmed'
+        ]
+      );
+
+      // Recalculate running balances for all subsequent account ledger entries
+      const [subsequentAccountEntries] = await connection.query(
+        'SELECT * FROM account_ledger WHERE account_id = ? AND id > ? ORDER BY id ASC',
+        [receipt.account_id, accountLedgerResult.insertId]
+      );
+
+      let currentAccountBalance = newAccountBalance;
+      for (const subsequentEntry of subsequentAccountEntries) {
+        const debit = parseFloat(subsequentEntry.debit || 0);
+        const credit = parseFloat(subsequentEntry.credit || 0);
+        currentAccountBalance = currentAccountBalance + debit - credit;
         
-        // Get the previous running balance (before this receipt entry)
-        const [previousEntry] = await connection.query(
-          'SELECT running_balance FROM account_ledger WHERE account_id = ? AND id < ? ORDER BY id DESC LIMIT 1',
-          [entry.account_id, entry.id]
-        );
-        
-        const prevBalance = previousEntry.length > 0 ? parseFloat(previousEntry[0].running_balance) : 0;
-        const newBalance = prevBalance + receipt.amount; // Debit increases the account balance
-        
-        // Update the account ledger entry with confirmed status and correct running balance
         await connection.query(
-          `UPDATE account_ledger SET 
-           status = 'confirmed', 
-           running_balance = ? 
-           WHERE reference_type = ? AND reference_id = ?`,
-          [newBalance, 'receipt', receipt_id]
+          'UPDATE account_ledger SET running_balance = ? WHERE id = ?',
+          [currentAccountBalance, subsequentEntry.id]
         );
-
-        // Recalculate running balances for all subsequent entries
-        const [subsequentEntries] = await connection.query(
-          'SELECT * FROM account_ledger WHERE account_id = ? AND id > ? ORDER BY id ASC',
-          [entry.account_id, entry.id]
-        );
-
-        let currentBalance = newBalance;
-        for (const subsequentEntry of subsequentEntries) {
-          const debit = parseFloat(subsequentEntry.debit || 0);
-          const credit = parseFloat(subsequentEntry.credit || 0);
-          currentBalance = currentBalance + debit - credit;
-          
-          await connection.query(
-            'UPDATE account_ledger SET running_balance = ? WHERE id = ?',
-            [currentBalance, subsequentEntry.id]
-          );
-        }
       }
 
       // Insert credit entry into client_ledger to reduce the receivable balance
       const [lastCustomerLedger] = await connection.query(
-        'SELECT running_balance FROM client_ledger WHERE customer_id = ? ORDER BY date DESC, id DESC LIMIT 1',
-        [receipt.customer_id]
+        'SELECT running_balance FROM client_ledger WHERE client_id = ? ORDER BY date DESC, id DESC LIMIT 1',
+        [receipt.client_id]
       );
       const prevCustomerBalance = lastCustomerLedger.length > 0 ? parseFloat(lastCustomerLedger[0].running_balance) : 0;
       const newCustomerBalance = prevCustomerBalance - receipt.amount;
 
       const [customerLedgerResult] = await connection.query(
-        `INSERT INTO client_ledger (customer_id, date, description, reference_type, reference_id, debit, credit, running_balance)
+        `INSERT INTO client_ledger (client_id, date, description, reference_type, reference_id, debit, credit, running_balance)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          receipt.customer_id,
+          receipt.client_id,
           receipt.receipt_date,
           `Payment ${receipt.receipt_number}`,
           'receipt',
@@ -225,8 +190,8 @@ const receivablesController = {
 
       // Recalculate running balances for all subsequent customer ledger entries
       const [subsequentCustomerEntries] = await connection.query(
-        'SELECT * FROM client_ledger WHERE customer_id = ? AND id > ? ORDER BY id ASC',
-        [receipt.customer_id, customerLedgerResult.insertId]
+        'SELECT * FROM client_ledger WHERE client_id = ? AND id > ? ORDER BY id ASC',
+        [receipt.client_id, customerLedgerResult.insertId]
       );
 
       let currentCustomerBalance = newCustomerBalance;
@@ -239,6 +204,18 @@ const receivablesController = {
           'UPDATE client_ledger SET running_balance = ? WHERE id = ?',
           [currentCustomerBalance, subsequentEntry.id]
         );
+      }
+
+      // Update the Clients table balance column with the final calculated balance
+      try {
+        await connection.query(
+          'UPDATE Clients SET balance = ? WHERE id = ?',
+          [currentCustomerBalance, receipt.client_id]
+        );
+        console.log('Clients table balance updated successfully for payment confirmation');
+      } catch (balanceError) {
+        console.warn('Failed to update Clients table balance:', balanceError.message);
+        // Continue with the transaction even if balance update fails
       }
 
       // Create a journal entry: Debit Cash/Bank, Credit Accounts Receivable
@@ -263,7 +240,7 @@ const receivablesController = {
         `INSERT INTO journal_entries (entry_number, entry_date, reference, description, total_debit, total_credit, status, created_by)
          VALUES (?, ?, ?, ?, ?, ?, 'posted', ?)`,
         [
-          `JE-RCP-${receipt.customer_id}-${Date.now()}`,
+          `JE-RCP-${receipt.client_id}-${Date.now()}`,
           receipt.receipt_date,
           `RCP-${receipt_id}`,
           `Customer payment - ${receipt.payment_method}`,
@@ -319,7 +296,7 @@ const receivablesController = {
   listReceipts: async (req, res) => {
     try {
       const { status } = req.query;
-      let query = `SELECT r.*, c.name FROM receipts r LEFT JOIN customers c ON r.customer_id = c.id`;
+      let query = `SELECT r.*, c.name FROM receipts r LEFT JOIN Clients c ON r.client_id = c.id`;
       const params = [];
       if (status) {
         query += ' WHERE r.status = ?';
@@ -341,7 +318,7 @@ const receivablesController = {
       
       // First get the invoice details to find the customer
       const [invoiceResult] = await db.query(
-        'SELECT customer_id FROM sales_orders WHERE id = ?',
+        'SELECT client_id FROM sales_orders WHERE id = ?',
         [invoice_id]
       );
       
@@ -349,12 +326,12 @@ const receivablesController = {
         return res.status(404).json({ success: false, error: 'Invoice not found' });
       }
       
-      const customerId = invoiceResult[0].customer_id;
+      const customerId = invoiceResult[0].client_id;
       
       // Get pending receipts for this customer created in the last 24 hours
       const [receipts] = await db.query(
         `SELECT * FROM receipts 
-         WHERE customer_id = ? 
+         WHERE client_id = ? 
          AND status = 'in pay' 
          AND receipt_date >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
          ORDER BY receipt_date DESC, id DESC`,

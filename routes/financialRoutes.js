@@ -46,6 +46,7 @@ const invoiceController = require('../controllers/invoiceController');
 const receivablesController = require('../controllers/receivablesController');
 const reportsController = require('../controllers/reportsController');
 const salesOrderController = require('../controllers/salesOrderController');
+const creditNoteController = require('../controllers/creditNoteController');
 
 // Chart of Accounts Routes
 router.get('/accounts', chartOfAccountsController.getAllAccounts);
@@ -206,5 +207,12 @@ router.put('/price-options/:id', updateCategoryPriceOption);
 router.delete('/price-options/:id', deleteCategoryPriceOption);
 
 router.get('/sales-reps', getSalesReps);
+
+// Credit Notes Routes
+router.get('/credit-notes', creditNoteController.getAllCreditNotes);
+router.get('/credit-notes/:id', creditNoteController.getCreditNoteById);
+router.post('/credit-notes', creditNoteController.createCreditNote);
+router.get('/customers/:customerId/invoices-for-credit', creditNoteController.getCustomerInvoices);
+router.get('/customers/:customerId/credit-notes', creditNoteController.getCustomerCreditNotes);
 
 module.exports = router; 

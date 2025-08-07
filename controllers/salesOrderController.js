@@ -815,6 +815,18 @@ const salesOrderController = {
         
         console.log('Journal entries and client ledger updated successfully for invoice');
         console.log('Client balance updated from', prevBalance, 'to', newBalance);
+        
+        // Update the Clients table balance column
+        try {
+          await connection.query(
+            'UPDATE Clients SET balance = ? WHERE id = ?',
+            [newBalance, originalOrder.client_id]
+          );
+          console.log('Clients table balance updated successfully');
+        } catch (balanceError) {
+          console.warn('Failed to update Clients table balance:', balanceError.message);
+          // Continue with the transaction even if balance update fails
+        }
       } else {
         console.error('Required accounts not found for journal entry creation');
         console.error('AR Account (ID: 140):', arAccount);

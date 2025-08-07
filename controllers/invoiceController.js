@@ -28,7 +28,7 @@ const invoiceController = {
 
       // Insert invoice
       const [invoiceResult] = await connection.query(
-        `INSERT INTO sales_orders (so_number, customer_id, order_date, expected_delivery_date, status, subtotal, tax_amount, total_amount, notes, created_by)
+        `INSERT INTO sales_orders (so_number, client_id, order_date, expected_delivery_date, status, subtotal, tax_amount, total_amount, notes, created_by)
          VALUES (?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, ?)`,
         [
           invoiceNumber,
@@ -86,6 +86,18 @@ const invoiceController = {
           newBalance
         ]
       );
+
+      // Update the Clients table balance column
+      try {
+        await connection.query(
+          'UPDATE Clients SET balance = ? WHERE id = ?',
+          [newBalance, customer_id]
+        );
+        console.log('Clients table balance updated successfully for invoice creation');
+      } catch (balanceError) {
+        console.warn('Failed to update Clients table balance:', balanceError.message);
+        // Continue with the transaction even if balance update fails
+      }
 
       // Create comprehensive journal entries
       const [salesRevenueAccount] = await connection.query(
@@ -268,7 +280,7 @@ const invoiceController = {
           so.*,
           c.name as customer_name,
           c.email as customer_email,
-          c.phone as customer_phone,
+          c.contact as customer_phone,
           c.address as customer_address
         FROM sales_orders so
         LEFT JOIN Clients c ON so.client_id = c.id

@@ -51,12 +51,7 @@ const clientController = {
       if (getAllClients) {
         // Return all clients without pagination
         [clients] = await db.query(
-          `SELECT c.*, oc.name as client_type_name, co.name as country_name, r.name as region_name, rt.name as route_name,
-            (
-              SELECT COALESCE(SUM(l.debit - l.credit), 0)
-              FROM client_ledger l
-              WHERE l.client_id = c.id
-            ) as balance
+          `SELECT c.*, oc.name as client_type_name, co.name as country_name, r.name as region_name, rt.name as route_name
            FROM Clients c
            LEFT JOIN outlet_categories oc ON c.client_type = oc.id
            LEFT JOIN Country co ON c.countryId = co.id
@@ -69,12 +64,7 @@ const clientController = {
       } else {
         // Return paginated data
         [clients] = await db.query(
-          `SELECT c.*, oc.name as client_type_name, co.name as country_name, r.name as region_name, rt.name as route_name,
-            (
-              SELECT COALESCE(SUM(l.debit - l.credit), 0)
-              FROM client_ledger l
-              WHERE l.client_id = c.id
-            ) as balance
+          `SELECT c.*, oc.name as client_type_name, co.name as country_name, r.name as region_name, rt.name as route_name
            FROM Clients c
            LEFT JOIN outlet_categories oc ON c.client_type = oc.id
            LEFT JOIN Country co ON c.countryId = co.id

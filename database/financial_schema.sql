@@ -149,16 +149,19 @@ CREATE TABLE sales_order_items (
 CREATE TABLE receipts (
     id INT PRIMARY KEY AUTO_INCREMENT,
     receipt_number VARCHAR(20) UNIQUE NOT NULL,
-    customer_id INT NOT NULL,
+    client_id INT NOT NULL,
     receipt_date DATE NOT NULL,
     payment_method ENUM('cash', 'check', 'bank_transfer', 'credit_card') NOT NULL,
-    reference_number VARCHAR(50),
+    reference VARCHAR(50),
+    invoice_number VARCHAR(50),
     amount DECIMAL(15,2) NOT NULL,
     notes TEXT,
     created_by INT NOT NULL,
+    account_id INT,
+    status ENUM('in pay', 'confirmed', 'cancelled') DEFAULT 'in pay',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (customer_id) REFERENCES customers(id),
+    FOREIGN KEY (client_id) REFERENCES Clients(id),
     FOREIGN KEY (created_by) REFERENCES users(id)
 );
 

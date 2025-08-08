@@ -764,33 +764,45 @@ exports.getSalesRepMasterReport = async (req, res) => {
   try {
     console.log('Fetching sales rep master report with params:', req.query);
     
-    const { year, month, date } = req.query;
+    const { start_date, end_date, status, country } = req.query;
     
     // Build date filter conditions
     let dateFilter = '';
     const params = [];
     
-    if (date) {
-      dateFilter = 'AND DATE(jp.checkInTime) = ?';
-      params.push(date);
-    } else if (year) {
-      // Fallback to year if no specific date provided
-      dateFilter = 'AND YEAR(jp.checkInTime) = ?';
-      params.push(year);
-      
-      if (month) {
-        dateFilter += ' AND MONTH(jp.checkInTime) = ?';
-        params.push(month);
-      }
+    if (start_date && end_date) {
+      dateFilter = 'AND DATE(jp.checkInTime) BETWEEN ? AND ?';
+      params.push(start_date, end_date);
+    } else if (start_date) {
+      dateFilter = 'AND DATE(jp.checkInTime) >= ?';
+      params.push(start_date);
+    } else if (end_date) {
+      dateFilter = 'AND DATE(jp.checkInTime) <= ?';
+      params.push(end_date);
     }
 
+    // Build filters for SalesRep
+    const filters = [];
+    if (status) {
+      filters.push('sr.status = ?');
+      params.push(parseInt(status));
+    }
+    if (country) {
+      filters.push('sr.country = ?');
+      params.push(country);
+    }
+    const whereClause = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : '';
+
     console.log('Date filter:', dateFilter);
+    console.log('Where clause:', whereClause);
     console.log('Query params:', params);
 
     const query = `
       SELECT 
         sr.id,
         sr.name,
+        sr.status,
+        sr.country,
         COALESCE(COUNT(DISTINCT jp.id), 0) as total_journeys,
         COALESCE(COUNT(DISTINCT CASE WHEN jp.status = 'completed' THEN jp.id END), 0) as completed_journeys,
         CASE 
@@ -802,7 +814,8 @@ exports.getSalesRepMasterReport = async (req, res) => {
       FROM SalesRep sr
       LEFT JOIN JourneyPlan jp ON sr.id = jp.userId 
         ${dateFilter ? dateFilter : ''}
-      GROUP BY sr.id, sr.name
+      ${whereClause}
+      GROUP BY sr.id, sr.name, sr.status, sr.country
       ORDER BY sr.name
     `;
 
@@ -858,7 +871,7 @@ exports.getJourneyDetails = async (req, res) => {
   try {
     console.log('Fetching journey details with params:', req.query);
     
-    const { salesRepId, date } = req.query;
+    const { salesRepId, start_date, end_date } = req.query;
     
     if (!salesRepId) {
       return res.status(400).json({ error: 'Sales rep ID is required' });
@@ -867,9 +880,15 @@ exports.getJourneyDetails = async (req, res) => {
     let dateFilter = '';
     const params = [salesRepId];
     
-    if (date) {
-      dateFilter = 'AND DATE(jp.checkInTime) = ?';
-      params.push(date);
+    if (start_date && end_date) {
+      dateFilter = 'AND DATE(jp.checkInTime) BETWEEN ? AND ?';
+      params.push(start_date, end_date);
+    } else if (start_date) {
+      dateFilter = 'AND DATE(jp.checkInTime) >= ?';
+      params.push(start_date);
+    } else if (end_date) {
+      dateFilter = 'AND DATE(jp.checkInTime) <= ?';
+      params.push(end_date);
     }
 
     console.log('Date filter:', dateFilter);

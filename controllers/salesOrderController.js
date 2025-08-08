@@ -262,26 +262,21 @@ const salesOrderController = {
       const soNumber = `SO-${String(soCount[0].count + 1).padStart(6, '0')}`;
       console.log('Generated SO number:', soNumber);
       
-      // Calculate totals with individual tax rates
+      // Calculate totals assuming unit_price is tax-inclusive and respecting per-item tax_type
       let subtotal = 0;
       let totalTaxAmount = 0;
+      let totalAmount = 0;
       
       for (const item of items) {
-        const netPrice = item.quantity * item.unit_price;
-        let taxRate = 0;
-        
-        if (item.tax_type === '16%') {
-          taxRate = 0.16;
-        } else if (item.tax_type === 'zero_rated' || item.tax_type === 'exempted') {
-          taxRate = 0;
-        }
-        
-        const itemTaxAmount = netPrice * taxRate;
-        subtotal += netPrice;
+        const gross = Number(item.quantity) * Number(item.unit_price);
+        const taxType = item.tax_type || '16%';
+        const taxRate = taxType === '16%' ? 0.16 : 0; // zero_rated/exempted => 0
+        const net = taxRate > 0 ? +(gross / (1 + taxRate)).toFixed(2) : +gross.toFixed(2);
+        const itemTaxAmount = +(gross - net).toFixed(2);
+        subtotal += net;
         totalTaxAmount += itemTaxAmount;
+        totalAmount += gross;
       }
-      
-      const totalAmount = subtotal + totalTaxAmount;
       console.log('Calculated totals - Net Amount:', subtotal, 'Tax:', totalTaxAmount, 'Total:', totalAmount);
       
       // Create order in sales_orders table
@@ -315,24 +310,17 @@ const salesOrderController = {
       console.log('Creating sales order items...');
       for (const item of items) {
         console.log('Creating item:', item);
-        
-        const netPrice = item.quantity * item.unit_price;
-        let taxRate = 0;
-        
-        if (item.tax_type === '16%') {
-          taxRate = 0.16;
-        } else if (item.tax_type === 'zero_rated' || item.tax_type === 'exempted') {
-          taxRate = 0;
-        }
-        
-        const taxAmount = netPrice * taxRate;
-        const totalPrice = netPrice + taxAmount;
-        
+        const taxType = item.tax_type || '16%';
+        const taxRate = taxType === '16%' ? 0.16 : 0; // zero_rated/exempted => 0
+        const gross = Number(item.quantity) * Number(item.unit_price);
+        const net = taxRate > 0 ? +(gross / (1 + taxRate)).toFixed(2) : +gross.toFixed(2);
+        const taxAmount = +(gross - net).toFixed(2);
+        const totalPrice = +gross.toFixed(2);
         await connection.query(`
           INSERT INTO sales_order_items (
             sales_order_id, product_id, quantity, unit_price, tax_amount, total_price, tax_type, net_price
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `, [salesOrderId, item.product_id, item.quantity, item.unit_price, taxAmount, totalPrice, item.tax_type, netPrice]);
+        `, [salesOrderId, item.product_id, item.quantity, item.unit_price, taxAmount, totalPrice, taxType, totalPrice]);
       }
       console.log('All items created, committing transaction...');
       await connection.commit();
@@ -384,10 +372,63 @@ const salesOrderController = {
       // Use provided client_id or customer_id, otherwise keep existing client_id
       const clientId = client_id || customer_id || existingSO[0].client_id;
       
-      // Calculate totals
-      const subtotal = items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
-      const taxAmount = subtotal * 0.1;
-      const totalAmount = subtotal + taxAmount;
+      const itemsLocked = (existingSO[0].my_status >= 1);
+      let subtotal = 0;
+      let taxAmount = 0;
+      let totalAmount = 0;
+
+      if (itemsLocked) {
+        // Use existing DB items when order is approved/locked
+        const [dbItems] = await connection.query(
+          'SELECT quantity, unit_price, tax_type FROM sales_order_items WHERE sales_order_id = ?',
+          [id]
+        );
+        for (const item of dbItems) {
+          const gross = Number(item.quantity) * Number(item.unit_price);
+          const rate = (item.tax_type === '16%') ? 0.16 : 0;
+          const net = rate > 0 ? +(gross / (1 + rate)).toFixed(2) : +gross.toFixed(2);
+          subtotal += net;
+          taxAmount += +(gross - net).toFixed(2);
+          totalAmount += gross;
+        }
+        subtotal = +subtotal.toFixed(2);
+        taxAmount = +taxAmount.toFixed(2);
+        totalAmount = +totalAmount.toFixed(2);
+      } else {
+        // Validate items and calculate totals from payload
+        if (!Array.isArray(items) || items.length === 0) {
+          return res.status(400).json({ success: false, error: 'Order must include at least one item' });
+        }
+
+        for (const item of items) {
+          if (!item || !item.product_id || Number(item.product_id) <= 0) {
+            return res.status(400).json({ success: false, error: 'Each item must have a valid product selected' });
+          }
+          if (!item.quantity || Number(item.quantity) <= 0) {
+            return res.status(400).json({ success: false, error: 'Item quantity must be greater than 0' });
+          }
+          if (item.unit_price === undefined || item.unit_price === null || Number(item.unit_price) < 0) {
+            return res.status(400).json({ success: false, error: 'Item unit price must be 0 or greater' });
+          }
+          const [productCheck] = await connection.query('SELECT id FROM products WHERE id = ?', [item.product_id]);
+          if (productCheck.length === 0) {
+            return res.status(400).json({ success: false, error: `Product with ID ${item.product_id} not found` });
+          }
+        }
+
+        // Calculate totals as tax-inclusive using per-item tax_type
+        for (const item of items) {
+          const gross = Number(item.quantity) * Number(item.unit_price);
+          const rate = (item.tax_type === '16%') ? 0.16 : 0; // zero_rated/exempted => 0
+          const net = rate > 0 ? +(gross / (1 + rate)).toFixed(2) : +gross.toFixed(2);
+          subtotal += net;
+          taxAmount += +(gross - net).toFixed(2);
+          totalAmount += gross;
+        }
+        subtotal = +subtotal.toFixed(2);
+        taxAmount = +taxAmount.toFixed(2);
+        totalAmount = +totalAmount.toFixed(2);
+      }
       
       // Map numeric status to string status for database
       const statusMap = {
@@ -410,27 +451,34 @@ const salesOrderController = {
       await connection.query(`
         UPDATE sales_orders 
         SET client_id = ?, 
-            sales_rep_id = COALESCE(?, sales_rep_id),
+            salesrep = COALESCE(?, salesrep),
             order_date = COALESCE(?, order_date), 
-            expected_delivery_date = ?, 
+            expected_delivery_date = COALESCE(?, expected_delivery_date), 
             status = ?,
             my_status = ?,
+            subtotal = ?,
+            tax_amount = ?,
             total_amount = ?, 
             notes = COALESCE(?, notes),
             updated_at = NOW()
         WHERE id = ?
-      `, [clientId, sales_rep_id, order_date, expected_delivery_date, statusString, myStatus, totalAmount, notes, id]);
+      `, [clientId, sales_rep_id, order_date, expected_delivery_date, statusString, myStatus, subtotal, taxAmount, totalAmount, notes, id]);
       
-      // Delete existing items
-      await connection.query('DELETE FROM sales_order_items WHERE sales_order_id = ?', [id]);
-      
-      // Insert new items
-      for (const item of items) {
-        await connection.query(`
-          INSERT INTO sales_order_items (
-            sales_order_id, product_id, quantity, unit_price, total_price
-          ) VALUES (?, ?, ?, ?, ?)
-        `, [id, item.product_id, item.quantity, item.unit_price, item.quantity * item.unit_price]);
+      if (!itemsLocked) {
+        // Delete and recreate items only if not approved/locked
+        await connection.query('DELETE FROM sales_order_items WHERE sales_order_id = ?', [id]);
+        for (const item of items) {
+          const gross = Number(item.quantity) * Number(item.unit_price);
+          const totalPrice = +gross.toFixed(2);
+          const rate = (item.tax_type === '16%') ? 0.16 : 0;
+          const net = rate > 0 ? +(gross / (1 + rate)).toFixed(2) : +gross.toFixed(2);
+          const itemTax = +(gross - net).toFixed(2);
+          await connection.query(`
+            INSERT INTO sales_order_items (
+              sales_order_id, product_id, quantity, unit_price, tax_amount, total_price, tax_type, net_price
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `, [id, item.product_id, item.quantity, item.unit_price, itemTax, totalPrice, item.tax_type || '16%', totalPrice]);
+        }
       }
       
       // Create journal entries and update client ledger when order is approved (status changes to confirmed)
@@ -696,19 +744,31 @@ const salesOrderController = {
         return res.status(400).json({ success: false, error: 'Order is already confirmed/invoiced' });
       }
       
-      // Get order items to calculate totals
+      // Get order items to calculate totals (unit_price stored tax-inclusive)
       const [items] = await connection.query(`
-        SELECT * FROM sales_order_items WHERE sales_order_id = ?
+        SELECT product_id, quantity, unit_price, tax_type FROM sales_order_items WHERE sales_order_id = ?
       `, [id]);
       
       if (items.length === 0) {
         return res.status(400).json({ success: false, error: 'No items found in this order' });
       }
       
-      // Calculate totals
-      const subtotal = items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
-      const taxAmount = subtotal * 0.1; // 10% tax
-      const totalAmount = subtotal + taxAmount;
+      // Calculate totals as tax-inclusive
+      let subtotal = 0;
+      let taxAmount = 0;
+      let totalAmount = 0;
+      for (const item of items) {
+        const gross = Number(item.quantity) * Number(item.unit_price);
+        const rate = item.tax_type === '16%' ? 0.16 : 0;
+        const net = rate > 0 ? +(gross / (1 + rate)).toFixed(2) : +gross.toFixed(2);
+        subtotal += net;
+        taxAmount += +(gross - net).toFixed(2);
+        totalAmount += gross;
+      }
+      // Round totals
+      subtotal = +subtotal.toFixed(2);
+      taxAmount = +taxAmount.toFixed(2);
+      totalAmount = +totalAmount.toFixed(2);
       
       // Update sales order to confirmed status and set my_status to 1
       await connection.query(`

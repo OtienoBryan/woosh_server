@@ -169,4 +169,8 @@ app.use('*', (req, res) => {
   });
 });
 
+app.get('/', (req, res) => {
+  res.redirect('/api/health'); // or return a small JSON
+});
+
 module.exports = app; 

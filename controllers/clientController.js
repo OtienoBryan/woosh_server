@@ -51,7 +51,12 @@ const clientController = {
       if (getAllClients) {
         // Return all clients without pagination
         [clients] = await db.query(
-          `SELECT c.*, oc.name as client_type_name, co.name as country_name, r.name as region_name, rt.name as route_name
+          `SELECT c.*,
+                  COALESCE(CAST(c.balance AS DECIMAL(15,2)), 0) AS balance,
+                  oc.name as client_type_name,
+                  co.name as country_name,
+                  r.name as region_name,
+                  rt.name as route_name
            FROM Clients c
            LEFT JOIN outlet_categories oc ON c.client_type = oc.id
            LEFT JOIN Country co ON c.countryId = co.id
@@ -64,7 +69,12 @@ const clientController = {
       } else {
         // Return paginated data
         [clients] = await db.query(
-          `SELECT c.*, oc.name as client_type_name, co.name as country_name, r.name as region_name, rt.name as route_name
+          `SELECT c.*,
+                  COALESCE(CAST(c.balance AS DECIMAL(15,2)), 0) AS balance,
+                  oc.name as client_type_name,
+                  co.name as country_name,
+                  r.name as region_name,
+                  rt.name as route_name
            FROM Clients c
            LEFT JOIN outlet_categories oc ON c.client_type = oc.id
            LEFT JOIN Country co ON c.countryId = co.id
@@ -76,6 +86,19 @@ const clientController = {
         console.log(`[getAllClients] returning ${clients.length} clients (page ${page})`);
       }
       
+      // Debug logs for balances and payload when requested
+      try {
+        const debug = String(req.query.debug || '').trim();
+        if (debug === '1') {
+          const sample = Array.isArray(clients) ? clients.slice(0, 5) : [];
+          const nullBalances = Array.isArray(clients) ? clients.filter((c) => c.balance === null || c.balance === undefined).length : 0;
+          console.log(`[getAllClients][debug] sample (first 5):`, sample.map(c => ({ id: c.id, name: c.name, balance: c.balance })));
+          console.log(`[getAllClients][debug] total clients: ${Array.isArray(clients) ? clients.length : 0}, null/undefined balances: ${nullBalances}`);
+        }
+      } catch (e) {
+        console.warn('[getAllClients][debug] log failed:', e?.message);
+      }
+
       res.json({
         data: clients,
         page: getAllClients ? 1 : page,

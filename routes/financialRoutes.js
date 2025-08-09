@@ -129,6 +129,7 @@ router.post('/payables/payment', payablesController.makeSupplierPayment);
 router.post('/payables/confirm-payment', payablesController.confirmSupplierPayment);
 router.get('/payments', payablesController.listPayments);
 router.get('/suppliers/:id/ledger', payablesController.getSupplierLedger);
+router.post('/suppliers/:id/pay', payablesController.paySupplier);
 
 // Invoice Routes
 router.get('/invoices', invoiceController.getAllInvoices);

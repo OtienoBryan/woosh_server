@@ -4,27 +4,62 @@ const purchaseOrderController = {
   // Get all purchase orders
   getAllPurchaseOrders: async (req, res) => {
     try {
-      const [rows] = await db.query(`
-        SELECT 
-          po.*,
-          s.company_name as supplier_name,
-          u.full_name as created_by_name,
-          (
-            SELECT COALESCE(SUM(amount), 0)
-            FROM payments
-            WHERE payments.purchase_order_id = po.id AND payments.status = 'confirmed'
-          ) as amount_paid
-        FROM purchase_orders po
-        LEFT JOIN suppliers s ON po.supplier_id = s.id
-        LEFT JOIN users u ON po.created_by = u.id
-        ORDER BY po.created_at DESC
-      `);
+      const { supplier_id, outstanding } = req.query;
+      const whereParts = [];
+      const params = [];
+      if (supplier_id) {
+        whereParts.push('po.supplier_id = ?');
+        params.push(supplier_id);
+      }
+      const whereSql = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
+
+      let rows;
+      try {
+        const havingSql = (outstanding && (outstanding === 'true' || outstanding === '1')) ? 'HAVING (po.total_amount - amount_paid) > 0' : '';
+        [rows] = await db.query(`
+          SELECT 
+            po.*,
+            s.company_name as supplier_name,
+            u.full_name as created_by_name,
+            (
+              SELECT COALESCE(SUM(amount), 0)
+              FROM payments
+              WHERE payments.purchase_order_id = po.id AND payments.status = 'confirmed'
+            ) as amount_paid
+          FROM purchase_orders po
+          LEFT JOIN suppliers s ON po.supplier_id = s.id
+          LEFT JOIN users u ON po.created_by = u.id
+          ${whereSql}
+          ${havingSql}
+          ORDER BY po.created_at DESC
+        `, params);
+      } catch (err) {
+        // Fallback for legacy schemas without payments.purchase_order_id or payments.status
+        console.warn('Falling back to legacy PO query (no payments join):', err?.message);
+        const fallbackHaving = (outstanding && (outstanding === 'true' || outstanding === '1')) ? 'HAVING (po.total_amount) > 0' : '';
+        [rows] = await db.query(`
+          SELECT 
+            po.*,
+            s.company_name as supplier_name,
+            u.full_name as created_by_name
+          FROM purchase_orders po
+          LEFT JOIN suppliers s ON po.supplier_id = s.id
+          LEFT JOIN users u ON po.created_by = u.id
+          ${whereSql}
+          ${fallbackHaving}
+          ORDER BY po.created_at DESC
+        `, params);
+        // Mark amount_paid = 0 in fallback
+        rows = rows.map(r => ({ ...r, amount_paid: 0 }));
+      }
 
       // Add balance_remaining field
-      const data = rows.map(po => ({
+      let data = rows.map(po => ({
         ...po,
         balance_remaining: Number(po.total_amount) - Number(po.amount_paid || 0)
       }));
+
+      // No extra in-memory filter; SQL HAVING applies only when outstanding=true
 
       res.json({ success: true, data });
     } catch (error) {

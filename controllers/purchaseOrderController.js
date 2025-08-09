@@ -412,6 +412,12 @@ const purchaseOrderController = {
       const supplier_id = purchaseOrders[0].supplier_id;
       const po_number = purchaseOrders[0].po_number;
 
+      // Set invoice_number on purchase order if not already set
+      if (!purchaseOrders[0].invoice_number) {
+        const invRef = `INV-${String(purchaseOrderId).padStart(6, '0')}`;
+        await connection.query('UPDATE purchase_orders SET invoice_number = ? WHERE id = ?', [invRef, purchaseOrderId]);
+      }
+
       // Insert into supplier_ledger (credit, increases balance)
       // Get last running balance
       const [lastLedger] = await connection.query(

@@ -12,7 +12,7 @@ const creditNoteController = {
           c.contact,
           c.address
         FROM credit_notes cn
-        LEFT JOIN Clients c ON cn.customer_id = c.id
+        LEFT JOIN Clients c ON cn.client_id = c.id
         ORDER BY cn.created_at DESC
       `);
       res.json({ success: true, data: rows });
@@ -34,7 +34,7 @@ const creditNoteController = {
           c.contact,
           c.address
         FROM credit_notes cn
-        LEFT JOIN Clients c ON cn.customer_id = c.id
+        LEFT JOIN Clients c ON cn.client_id = c.id
         WHERE cn.id = ?
       `, [id]);
       
@@ -110,7 +110,7 @@ const creditNoteController = {
       console.log('Transaction started for credit note creation');
       
       const { 
-        customer_id, 
+       customer_id, 
         credit_note_date, 
         reason, 
         original_invoice_id,
@@ -140,7 +140,7 @@ const creditNoteController = {
       const [creditNoteResult] = await connection.query(
         `INSERT INTO credit_notes (
           credit_note_number, 
-          customer_id, 
+          client_id, 
           credit_note_date, 
           original_invoice_id,
           reason, 
@@ -356,7 +356,7 @@ const creditNoteController = {
           so.so_number as original_invoice_number
         FROM credit_notes cn
         LEFT JOIN sales_orders so ON cn.original_invoice_id = so.id
-        WHERE cn.customer_id = ?
+        WHERE cn.client_id = ?
         ORDER BY cn.created_at DESC
       `, [customerId]);
       

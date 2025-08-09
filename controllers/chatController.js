@@ -125,6 +125,23 @@ const chatController = {
     } catch (error) {
       res.status(500).json({ message: 'Failed to fetch chat rooms', error: error.message });
     }
+  },
+
+  // Latest message timestamp across all rooms the user belongs to
+  getLatestForUser: async (req, res) => {
+    const userId = req.user.userId;
+    try {
+      const [[row]] = await db.query(
+        `SELECT MAX(m.sent_at) AS last_message_at
+         FROM chat_messages m
+         INNER JOIN chat_room_members mem ON mem.room_id = m.room_id
+         WHERE mem.staff_id = ?`,
+        [userId]
+      );
+      res.json({ success: true, last_message_at: row?.last_message_at || null });
+    } catch (error) {
+      res.status(500).json({ success: false, message: 'Failed to fetch latest chat info', error: error.message });
+    }
   }
 };
 

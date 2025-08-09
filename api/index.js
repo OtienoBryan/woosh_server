@@ -149,6 +149,7 @@ if (faultyProductsRoutes) app.use('/api/faulty-products', faultyProductsRoutes);
 if (receiptRoutes) app.use('/api/receipts', receiptRoutes);
 if (storeRoutes) app.use('/api/stores', storeRoutes);
 if (supplierRoutes) app.use('/api/suppliers', supplierRoutes);
+if (chatRoutes) app.use('/api/chat', chatRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

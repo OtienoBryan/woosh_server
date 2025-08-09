@@ -39,6 +39,8 @@ router.post('/rooms/:roomId/messages', chatController.sendMessage);
 router.get('/rooms/:roomId/messages', chatController.getMessages);
 // List chat rooms for the authenticated user
 router.get('/my-rooms', chatController.getRoomsForUser);
+// Get latest message timestamp for authenticated user
+router.get('/latest', chatController.getLatestForUser);
 // Edit a message
 router.patch('/messages/:id', chatController.editMessage);
 // Delete a message

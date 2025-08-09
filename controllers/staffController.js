@@ -27,6 +27,28 @@ const staffController = {
       res.status(500).json({ message: 'Error fetching staff list', error: error.message });
     }
   },
+  uploadAvatar: async (req, res) => {
+    const staffId = req.params.id;
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: 'No file uploaded' });
+      }
+      const { originalname, buffer, mimetype } = req.file;
+      const b64 = Buffer.from(buffer).toString('base64');
+      const dataURI = `data:${mimetype};base64,${b64}`;
+      const result = await cloudinary.uploader.upload(dataURI, {
+        folder: 'staff_avatars',
+        resource_type: 'auto',
+        public_id: `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_'),
+      });
+      const url = result.secure_url;
+      await db.query('UPDATE staff SET photo_url = ? WHERE id = ?', [url, staffId]);
+      res.json({ success: true, url });
+    } catch (error) {
+      console.error('Avatar upload error:', error);
+      res.status(500).json({ success: false, message: 'Failed to upload avatar', error: error.message });
+    }
+  },
 
   getStaffById: async (req, res) => {
     try {

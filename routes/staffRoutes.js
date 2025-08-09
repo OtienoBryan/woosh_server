@@ -35,6 +35,9 @@ router.get('/staff/:id/contracts', staffController.getContracts);
 router.post('/staff/contracts/:contractId/renew', upload.single('file'), staffController.renewContract);
 router.get('/staff/contracts/expiring', staffController.getExpiringContracts);
 
+// Staff avatar upload
+router.post('/staff/:id/avatar', upload.single('avatar'), staffController.uploadAvatar);
+
 // Termination Letters
 router.post('/staff/:id/termination-letters', upload.single('file'), staffController.uploadTerminationLetter);
 router.get('/staff/:id/termination-letters', staffController.getTerminationLetters);

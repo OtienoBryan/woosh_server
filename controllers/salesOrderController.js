@@ -395,6 +395,22 @@ const salesOrderController = {
         taxAmount = +taxAmount.toFixed(2);
         totalAmount = +totalAmount.toFixed(2);
       } else {
+        // If only changing status to cancelled/declined without items, preserve existing totals
+        const statusMapPreview = {
+          'cancel': 'cancelled',
+          'cancelled': 'cancelled',
+          'canceled': 'cancelled',
+          'decline': 'declined',
+          'declined': 'declined'
+        };
+        const incomingKey = (status !== undefined && status !== null) ? String(status).toLowerCase() : '';
+        const incomingStatus = statusMapPreview[incomingKey];
+        const statusOnly = (incomingStatus === 'cancelled' || incomingStatus === 'declined') && (!Array.isArray(items) || items.length === 0);
+        if (statusOnly) {
+          subtotal = Number(existingSO[0].subtotal || 0);
+          taxAmount = Number(existingSO[0].tax_amount || 0);
+          totalAmount = Number(existingSO[0].total_amount || 0);
+        } else {
         // Validate items and calculate totals from payload
         if (!Array.isArray(items) || items.length === 0) {
           return res.status(400).json({ success: false, error: 'Order must include at least one item' });
@@ -428,6 +444,7 @@ const salesOrderController = {
         subtotal = +subtotal.toFixed(2);
         taxAmount = +taxAmount.toFixed(2);
         totalAmount = +totalAmount.toFixed(2);
+        }
       }
       
       // Map numeric status to string status for database
@@ -436,15 +453,29 @@ const salesOrderController = {
         '1': 'confirmed',
         '2': 'shipped',
         '3': 'delivered',
-        '4': 'in payment',
-        '5': 'paid'
+        // numeric shortcuts that map directly to final strings (as per user's change)
+        '4': 'cancelled',
+        '5': 'declined',
+        // string inputs from UI
+        'cancel': 'cancelled',
+        'cancelled': 'cancelled',
+        'canceled': 'cancelled',
+        'declined': 'declined',
+        'declined': 'declined'
       };
-      const statusString = statusMap[status] || status || existingSO[0].status;
+      const statusKey = (status !== undefined && status !== null) ? String(status).trim().toLowerCase() : '';
+      const statusString = statusMap[statusKey] || status || existingSO[0].status;
       
-      // Determine my_status based on status change
+      // Determine my_status based on status value (force set for cancel/decline)
       let myStatus = existingSO[0].my_status || 0;
       if (statusString === 'confirmed' && existingSO[0].status !== 'confirmed') {
-        myStatus = 1; // Set to approved when status changes to confirmed
+        myStatus = 1; // approved on confirmation
+      }
+      if (statusString === 'cancelled') {
+        myStatus = 4;
+      }
+      if (statusString === 'declined') {
+        myStatus = 5;
       }
       
       // Update sales order - preserve existing values if not provided
@@ -465,6 +496,8 @@ const salesOrderController = {
       `, [clientId, sales_rep_id, order_date, expected_delivery_date, statusString, myStatus, subtotal, taxAmount, totalAmount, notes, id]);
       
       if (!itemsLocked) {
+        const statusOnlyFinal = (statusString === 'cancelled' || statusString === 'declined') && (!Array.isArray(items) || items.length === 0);
+        if (!statusOnlyFinal) {
         // Delete and recreate items only if not approved/locked
         await connection.query('DELETE FROM sales_order_items WHERE sales_order_id = ?', [id]);
         for (const item of items) {
@@ -478,6 +511,7 @@ const salesOrderController = {
               sales_order_id, product_id, quantity, unit_price, tax_amount, total_price, tax_type, net_price
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           `, [id, item.product_id, item.quantity, item.unit_price, itemTax, totalPrice, item.tax_type || '16%', totalPrice]);
+        }
         }
       }
       
@@ -594,9 +628,14 @@ const salesOrderController = {
       }
       
       await connection.commit();
+      // Best-effort update of legacy column if it exists
+      try {
+        await connection.query('UPDATE sales_orders SET my__status = ? WHERE id = ?', [myStatus, id]);
+      } catch (_) {}
+
       console.log('Sales order updated successfully:', id);
       console.log('Status changed to:', statusString, 'my_status set to:', myStatus);
-      res.json({ success: true, message: 'Sales order updated successfully' });
+      res.json({ success: true, message: 'Sales order updated successfully', status: statusString, my_status: myStatus });
     } catch (error) {
       await connection.rollback();
       console.error('=== ERROR UPDATING SALES ORDER ===');

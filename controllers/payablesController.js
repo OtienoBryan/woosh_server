@@ -361,6 +361,39 @@ const payablesController = {
       );
       const currentBalance = lastRows.length ? Number(lastRows[0].running_balance || 0) : (totalCredit - totalDebit);
 
+      // Aging buckets (optional: respect date filters, ignore text search)
+      let agingWhere = 'WHERE supplier_id = ?';
+      const agingParams = [id];
+      if (start_date && end_date) {
+        agingWhere += ' AND date BETWEEN ? AND ?';
+        agingParams.push(start_date, end_date);
+      } else if (start_date) {
+        agingWhere += ' AND date >= ?';
+        agingParams.push(start_date);
+      } else if (end_date) {
+        agingWhere += ' AND date <= ?';
+        agingParams.push(end_date);
+      }
+      const [agingRows] = await db.query(
+        `SELECT
+           COALESCE(SUM(CASE WHEN DATEDIFF(CURDATE(), date) <= 0 THEN credit - debit ELSE 0 END), 0) AS current,
+           COALESCE(SUM(CASE WHEN DATEDIFF(CURDATE(), date) BETWEEN 1 AND 30 THEN credit - debit ELSE 0 END), 0) AS days_1_30,
+           COALESCE(SUM(CASE WHEN DATEDIFF(CURDATE(), date) BETWEEN 31 AND 60 THEN credit - debit ELSE 0 END), 0) AS days_31_60,
+           COALESCE(SUM(CASE WHEN DATEDIFF(CURDATE(), date) BETWEEN 61 AND 90 THEN credit - debit ELSE 0 END), 0) AS days_61_90,
+           COALESCE(SUM(CASE WHEN DATEDIFF(CURDATE(), date) > 90 THEN credit - debit ELSE 0 END), 0) AS days_90_plus,
+           COALESCE(SUM(credit - debit), 0) AS total_payable
+         FROM supplier_ledger ${agingWhere}`,
+        agingParams
+      );
+      const aging = agingRows && agingRows.length ? agingRows[0] : {
+        current: 0,
+        days_1_30: 0,
+        days_31_60: 0,
+        days_61_90: 0,
+        days_90_plus: 0,
+        total_payable: 0,
+      };
+
       res.json({
         success: true,
         data: {
@@ -371,6 +404,7 @@ const payablesController = {
             total_credit: totalCredit,
             balance: currentBalance,
           },
+          aging,
           pagination: {
             page,
             limit,

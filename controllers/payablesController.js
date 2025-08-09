@@ -300,6 +300,90 @@ const payablesController = {
       res.status(500).json({ success: false, error: 'Failed to fetch accounts' });
     }
   },
+
+  // Get supplier ledger entries and supplier details
+  getSupplierLedger: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { start_date, end_date, q, page: pageStr, limit: limitStr } = req.query;
+      const page = Math.max(1, parseInt(pageStr, 10) || 1);
+      const limit = Math.min(200, Math.max(1, parseInt(limitStr, 10) || 25));
+      const offset = (page - 1) * limit;
+      // Supplier details
+      const [suppliers] = await db.query('SELECT * FROM suppliers WHERE id = ?', [id]);
+      if (suppliers.length === 0) {
+        return res.status(404).json({ success: false, error: 'Supplier not found' });
+      }
+      const supplier = suppliers[0];
+
+      // Ledger entries with optional filters
+      let baseWhere = 'WHERE supplier_id = ?';
+      const params = [id];
+      if (start_date && end_date) {
+        baseWhere += ' AND date BETWEEN ? AND ?';
+        params.push(start_date, end_date);
+      } else if (start_date) {
+        baseWhere += ' AND date >= ?';
+        params.push(start_date);
+      } else if (end_date) {
+        baseWhere += ' AND date <= ?';
+        params.push(end_date);
+      }
+      if (q && String(q).trim() !== '') {
+        baseWhere += ' AND (description LIKE ? OR reference_type LIKE ? OR reference_id LIKE ?)';
+        const like = `%${q}%`;
+        params.push(like, like, like);
+      }
+      // Count total for pagination
+      const [countRows] = await db.query(`SELECT COUNT(*) as cnt FROM supplier_ledger ${baseWhere}`, params);
+      const total = countRows[0]?.cnt || 0;
+
+      // Fetch paginated entries
+      const [entries] = await db.query(
+        `SELECT id, supplier_id, date, description, reference_type, reference_id, debit, credit, running_balance, created_at
+         FROM supplier_ledger ${baseWhere} ORDER BY date DESC, id DESC LIMIT ? OFFSET ?`,
+        [...params, limit, offset]
+      );
+
+      // Summary
+      // Summary over the full filtered set (not just current page)
+      const [sumRows] = await db.query(
+        `SELECT COALESCE(SUM(debit),0) as total_debit, COALESCE(SUM(credit),0) as total_credit
+         FROM supplier_ledger ${baseWhere}`,
+        params
+      );
+      const totalDebit = Number(sumRows[0]?.total_debit || 0);
+      const totalCredit = Number(sumRows[0]?.total_credit || 0);
+      // Latest running balance in filtered set
+      const [lastRows] = await db.query(
+        `SELECT running_balance FROM supplier_ledger ${baseWhere} ORDER BY date DESC, id DESC LIMIT 1`,
+        params
+      );
+      const currentBalance = lastRows.length ? Number(lastRows[0].running_balance || 0) : (totalCredit - totalDebit);
+
+      res.json({
+        success: true,
+        data: {
+          supplier,
+          entries,
+          summary: {
+            total_debit: totalDebit,
+            total_credit: totalCredit,
+            balance: currentBalance,
+          },
+          pagination: {
+            page,
+            limit,
+            total,
+            total_pages: Math.max(1, Math.ceil(total / limit))
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching supplier ledger:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch supplier ledger' });
+    }
+  }
 };
 
 module.exports = payablesController; 

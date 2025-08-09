@@ -2,35 +2,27 @@ const db = require('./database/db');
 
 async function runMigration() {
   try {
-    console.log('Starting sales_orders status migration...');
-    
-    // First, create a temporary column with the new ENUM values
-    await db.query(`
-      ALTER TABLE sales_orders 
-      ADD COLUMN status_new ENUM('draft', 'confirmed', 'shipped', 'delivered', 'cancelled', 'in payment', 'paid') DEFAULT 'draft'
-    `);
-    console.log('✓ Added temporary status_new column');
-    
-    // Copy data from the old column to the new column
-    await db.query('UPDATE sales_orders SET status_new = status');
-    console.log('✓ Copied data to temporary column');
-    
-    // Drop the old column
-    await db.query('ALTER TABLE sales_orders DROP COLUMN status');
-    console.log('✓ Dropped old status column');
-    
-    // Rename the new column to status
-    await db.query(`
-      ALTER TABLE sales_orders 
-      CHANGE status_new status ENUM('draft', 'confirmed', 'shipped', 'delivered', 'cancelled', 'in payment', 'paid') DEFAULT 'draft'
-    `);
-    console.log('✓ Renamed status_new to status');
-    
-    // Verify the update
-    const [result] = await db.query('SELECT DISTINCT status FROM sales_orders ORDER BY status');
-    console.log('✓ Migration completed successfully!');
-    console.log('Available statuses:', result.map(r => r.status));
-    
+    console.log('Starting migration: add tax columns to purchase_order_items...');
+    // Check columns
+    const [columns] = await db.query('DESCRIBE purchase_order_items');
+    const hasTaxAmount = columns.some(c => c.Field === 'tax_amount');
+    const hasTaxType = columns.some(c => c.Field === 'tax_type');
+
+    if (!hasTaxAmount) {
+      await db.query('ALTER TABLE purchase_order_items ADD COLUMN tax_amount DECIMAL(15,2) DEFAULT 0');
+      console.log('✓ Added tax_amount');
+    } else {
+      console.log('tax_amount already exists');
+    }
+
+    if (!hasTaxType) {
+      await db.query("ALTER TABLE purchase_order_items ADD COLUMN tax_type VARCHAR(20) NULL");
+      console.log('✓ Added tax_type');
+    } else {
+      console.log('tax_type already exists');
+    }
+
+    console.log('✓ Migration completed successfully');
     process.exit(0);
   } catch (error) {
     console.error('Migration failed:', error);

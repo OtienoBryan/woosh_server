@@ -95,9 +95,22 @@ const purchaseOrderController = {
       const [poCount] = await connection.query('SELECT COUNT(*) as count FROM purchase_orders');
       const poNumber = `PO-${String(poCount[0].count + 1).padStart(6, '0')}`;
 
-      // Calculate totals
-      const subtotal = items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
-      const taxAmount = subtotal * 0.1; // 10% tax
+      // Calculate totals using per-item tax type (default 16% when not provided)
+      // Client sends tax-inclusive unit_price. Convert to net/tax per line here.
+      const calcLine = (it) => {
+        const taxType = (it.tax_type || '16%');
+        const rate = taxType === '16%' ? 0.16 : 0;
+        const grossUnit = Number(it.unit_price);
+        const qty = Number(it.quantity);
+        const grossLine = qty * grossUnit;
+        const netUnit = rate > 0 ? grossUnit / (1 + rate) : grossUnit;
+        const netLine = qty * netUnit;
+        const taxLine = grossLine - netLine;
+        return { netLine, taxLine, taxType, grossLine, netUnit };
+      };
+
+      const subtotal = items.reduce((sum, it) => sum + calcLine(it).netLine, 0);
+      const taxAmount = items.reduce((sum, it) => sum + calcLine(it).taxLine, 0);
       const totalAmount = subtotal + taxAmount;
 
       // Create purchase order
@@ -110,13 +123,23 @@ const purchaseOrderController = {
 
       const purchaseOrderId = poResult.insertId;
 
-      // Create purchase order items
+      // Create purchase order items (store per-item tax as well if columns exist). Persist unit_price/total_price as tax-inclusive.
       for (const item of items) {
-        await connection.query(`
-          INSERT INTO purchase_order_items (
-            purchase_order_id, product_id, quantity, unit_price, total_price
-          ) VALUES (?, ?, ?, ?, ?)
-        `, [purchaseOrderId, item.product_id, item.quantity, item.unit_price, item.quantity * item.unit_price]);
+        const { netLine, taxLine, taxType, grossLine } = calcLine(item);
+        // Try inserting with tax columns; if it fails (older schema), fallback without them
+        try {
+          await connection.query(`
+            INSERT INTO purchase_order_items (
+              purchase_order_id, product_id, quantity, unit_price, total_price, tax_amount, tax_type
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          `, [purchaseOrderId, item.product_id, item.quantity, item.unit_price, grossLine, taxLine, taxType]);
+        } catch (e) {
+          await connection.query(`
+            INSERT INTO purchase_order_items (
+              purchase_order_id, product_id, quantity, unit_price, total_price
+            ) VALUES (?, ?, ?, ?, ?)
+          `, [purchaseOrderId, item.product_id, item.quantity, item.unit_price, grossLine]);
+        }
       }
 
       await connection.commit();
@@ -167,9 +190,21 @@ const purchaseOrderController = {
         return res.status(404).json({ success: false, error: 'Purchase order not found' });
       }
 
-      // Calculate totals
-      const subtotal = items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
-      const taxAmount = subtotal * 0.1;
+      // Client sends tax-inclusive unit_price. Convert to net/tax per line here.
+      const calcLine = (it) => {
+        const taxType = (it.tax_type || '16%');
+        const rate = taxType === '16%' ? 0.16 : 0;
+        const grossUnit = Number(it.unit_price);
+        const qty = Number(it.quantity);
+        const grossLine = qty * grossUnit;
+        const netUnit = rate > 0 ? grossUnit / (1 + rate) : grossUnit;
+        const netLine = qty * netUnit;
+        const taxLine = grossLine - netLine;
+        return { netLine, taxLine, taxType, grossLine, netUnit };
+      };
+
+      const subtotal = items.reduce((sum, it) => sum + calcLine(it).netLine, 0);
+      const taxAmount = items.reduce((sum, it) => sum + calcLine(it).taxLine, 0);
       const totalAmount = subtotal + taxAmount;
 
       // Update purchase order
@@ -183,13 +218,22 @@ const purchaseOrderController = {
       // Delete existing items
       await connection.query('DELETE FROM purchase_order_items WHERE purchase_order_id = ?', [id]);
 
-      // Create new items
+      // Create new items (store per-item tax as well if columns exist). Persist unit_price/total_price as tax-inclusive.
       for (const item of items) {
-        await connection.query(`
-          INSERT INTO purchase_order_items (
-            purchase_order_id, product_id, quantity, unit_price, total_price
-          ) VALUES (?, ?, ?, ?, ?)
-        `, [id, item.product_id, item.quantity, item.unit_price, item.quantity * item.unit_price]);
+        const { netLine, taxLine, taxType, grossLine } = calcLine(item);
+        try {
+          await connection.query(`
+            INSERT INTO purchase_order_items (
+              purchase_order_id, product_id, quantity, unit_price, total_price, tax_amount, tax_type
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          `, [id, item.product_id, item.quantity, item.unit_price, grossLine, taxLine, taxType]);
+        } catch (e) {
+          await connection.query(`
+            INSERT INTO purchase_order_items (
+              purchase_order_id, product_id, quantity, unit_price, total_price
+            ) VALUES (?, ?, ?, ?, ?)
+          `, [id, item.product_id, item.quantity, item.unit_price, grossLine]);
+        }
       }
 
       await connection.commit();

@@ -150,15 +150,6 @@ if (receiptRoutes) app.use('/api/receipts', receiptRoutes);
 if (storeRoutes) app.use('/api/stores', storeRoutes);
 if (supplierRoutes) app.use('/api/suppliers', supplierRoutes);
 
-// Root route handlers to prevent 404 errors
-app.get('/', (req, res) => {
-  res.redirect('/api/health');
-});
-
-app.get('/api', (req, res) => {
-  res.redirect('/api/health');
-});
-
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Error:', err);

@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS credit_notes (
   credit_note_number VARCHAR(50) UNIQUE NOT NULL,
   customer_id INT NOT NULL,
   credit_note_date DATE NOT NULL,
-  original_invoice_id INT,
+  original_invoice_ids JSON,
   reason TEXT,
   subtotal DECIMAL(15,2) NOT NULL DEFAULT 0,
   tax_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
@@ -14,10 +14,8 @@ CREATE TABLE IF NOT EXISTS credit_notes (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (customer_id) REFERENCES customers(id),
-  FOREIGN KEY (original_invoice_id) REFERENCES sales_orders(id),
   INDEX idx_customer_id (customer_id),
-  INDEX idx_credit_note_number (credit_note_number),
-  INDEX idx_original_invoice_id (original_invoice_id)
+  INDEX idx_credit_note_number (credit_note_number)
 );
 
 -- Create credit_note_items table

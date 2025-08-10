@@ -196,15 +196,15 @@ const creditNoteController = {
 
       // Update customer ledger (credit, decreases receivable)
       const [lastCustomerLedger] = await connection.query(
-        'SELECT running_balance FROM customer_ledger WHERE customer_id = ? ORDER BY date DESC, id DESC LIMIT 1',
+        'SELECT running_balance FROM client_ledger WHERE client_id = ? ORDER BY date DESC, id DESC LIMIT 1',
         [customer_id]
       );
       const prevBalance = lastCustomerLedger.length > 0 ? parseFloat(lastCustomerLedger[0].running_balance) : 0;
       const newBalance = prevBalance - total_amount; // Credit note reduces receivable
 
       await connection.query(
-        `INSERT INTO customer_ledger (
-          customer_id, 
+        `INSERT INTO client_ledger (
+          client_id, 
           date, 
           description, 
           reference_type, 

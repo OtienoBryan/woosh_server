@@ -867,7 +867,7 @@ const reportsController = {
   // List all journal entries with filters
   listJournalEntries: async (req, res) => {
     try {
-      const { start_date, end_date, account_id, reference, description } = req.query;
+      const { start_date, end_date, account_id, account_code, reference, description } = req.query;
       let sql = `
         SELECT 
           je.id as journal_entry_id,
@@ -903,6 +903,10 @@ const reportsController = {
       if (account_id) {
         sql += ' AND jel.account_id = ?';
         params.push(account_id);
+      }
+      if (account_code) {
+        sql += ' AND coa.account_code = ?';
+        params.push(account_code);
       }
       if (reference) {
         sql += ' AND je.reference LIKE ?';

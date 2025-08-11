@@ -347,7 +347,7 @@ const reportsController = {
           debtors => !assets.some(a => a.id === debtors.id) && !cashAndEquivalents.some(ca => ca.id === debtors.id) && !accountsReceivable.some(ar => ar.id === debtors.id) && !stockAccounts.some(stock => stock.id === debtors.id)
         ),
         ...(inventoryValue > 0 ? [{
-          id: 'inventory',
+          id: 1300,
           account_code: '1300',
           account_name: 'Inventory (from store inventory)',
           account_type: 1,
@@ -357,7 +357,7 @@ const reportsController = {
           change_percentage: 0
         }] : []),
         ...(unpaidAssetsValue > 0 ? [{
-          id: 'unpaid_assets',
+          id: 1400,
           account_code: '1400',
           account_name: 'Unpaid Assets (from assets table)',
           account_type: 1,
@@ -386,7 +386,7 @@ const reportsController = {
         : [
             ...assetsWithExtras,
             {
-              id: 'accum_dep',
+              id: 1500,
               account_code: '1500',
               account_name: 'Accumulated Depreciation',
               account_type: 1,
@@ -401,8 +401,8 @@ const reportsController = {
       liabilities = [
         ...liabilities,
         {
-          id: 'payables',
-          account_code: '2000',
+          id: 30,
+          account_code: '30',
           account_name: 'Accounts Payable',
           account_type: 2,
           balance: totalPayables,
@@ -411,7 +411,7 @@ const reportsController = {
           change_percentage: 0
         },
         {
-          id: 'accrued',
+          id: 32,
           account_code: '32',
           account_name: 'Accrued Expenses',
           account_type: 2,
@@ -425,7 +425,7 @@ const reportsController = {
       // Add payroll-related liabilities
       const payrollLiabilities = [
         {
-          id: 'paye',
+          id: 37,
           account_code: '37',
           account_name: 'PAYE Payable',
           account_type: 2,
@@ -435,7 +435,7 @@ const reportsController = {
           change_percentage: 0
         },
         {
-          id: 'nssf',
+          id: 39,
           account_code: '39',
           account_name: 'NSSF Payable',
           account_type: 2,
@@ -445,7 +445,7 @@ const reportsController = {
           change_percentage: 0
         },
         {
-          id: 'nhif',
+          id: 40,
           account_code: '40',
           account_name: 'NHIF Payable',
           account_type: 2,

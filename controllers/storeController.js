@@ -796,6 +796,193 @@ const storeController = {
     } finally {
       dbConnection.release();
     }
+  },
+
+  // Receive products back to stock from cancelled orders
+  receiveToStockFromOrder: async (req, res) => {
+    const dbConnection = await connection.getConnection();
+    try {
+      await dbConnection.beginTransaction();
+      
+      const { order_id, store_id, notes, items } = req.body;
+      
+      if (!order_id || !store_id || !items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Order ID, store ID, and items are required'
+        });
+      }
+
+      // Verify the order exists and is cancelled
+      const [orderResult] = await dbConnection.query(
+        'SELECT id, so_number, my_status FROM sales_orders WHERE id = ?',
+        [order_id]
+      );
+
+      if (orderResult.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Order not found'
+        });
+      }
+
+      if (orderResult[0].my_status !== 4 && orderResult[0].my_status !== 6) { // 4 = Cancelled, 6 = Returned to stock
+        return res.status(400).json({
+          success: false,
+          error: 'Only cancelled orders or orders with returned products can have products returned to stock'
+        });
+      }
+
+      // Verify store exists
+      const [storeResult] = await dbConnection.query(
+        'SELECT id, store_name FROM stores WHERE id = ?',
+        [store_id]
+      );
+
+      if (storeResult.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Store not found'
+        });
+      }
+
+      const processedItems = [];
+      const errors = [];
+
+      // Process each item
+      for (const item of items) {
+        try {
+          const { product_id, quantity, unit_cost } = item;
+          
+          if (!product_id || quantity <= 0) {
+            errors.push(`Invalid product data: ${JSON.stringify(item)}`);
+            continue;
+          }
+
+          // Verify product exists
+          const [productResult] = await dbConnection.query(
+            'SELECT id, product_name, cost_price FROM products WHERE id = ?',
+            [product_id]
+          );
+
+          if (productResult.length === 0) {
+            errors.push(`Product with ID ${product_id} not found`);
+            continue;
+          }
+
+          const product = productResult[0];
+          const actualUnitCost = unit_cost > 0 ? unit_cost : product.cost_price;
+
+          // Check if store_inventory record exists
+          const [inventoryResult] = await dbConnection.query(
+            'SELECT id, quantity FROM store_inventory WHERE store_id = ? AND product_id = ?',
+            [store_id, product_id]
+          );
+
+          let newQuantity;
+          if (inventoryResult.length > 0) {
+            // Update existing inventory
+            newQuantity = inventoryResult[0].quantity + quantity;
+            await dbConnection.query(
+              'UPDATE store_inventory SET quantity = ?, updated_at = NOW() WHERE id = ?',
+              [newQuantity, inventoryResult[0].id]
+            );
+          } else {
+            // Create new inventory record
+            newQuantity = quantity;
+            await dbConnection.query(
+              'INSERT INTO store_inventory (store_id, product_id, quantity, updated_at) VALUES (?, ?, ?, NOW())',
+              [store_id, product_id, quantity]
+            );
+          }
+
+          // Record inventory transaction
+          const transactionNumber = `RT-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          
+          // Get last balance for this product/store
+          const [lastTrans] = await dbConnection.query(
+            'SELECT balance FROM inventory_transactions WHERE product_id = ? AND store_id = ? ORDER BY date_received DESC, id DESC LIMIT 1',
+            [product_id, store_id]
+          );
+          const prevBalance = lastTrans.length > 0 ? parseFloat(lastTrans[0].balance) : 0;
+          const newBalance = prevBalance + quantity;
+          
+          await dbConnection.query(
+            `INSERT INTO inventory_transactions 
+              (product_id, reference, amount_in, amount_out, balance, date_received, store_id, staff_id)
+             VALUES (?, ?, ?, ?, ?, NOW(), ?, ?)`,
+            [
+              product_id,
+              `Return to stock from cancelled order ${orderResult[0].so_number}`,
+              quantity, // amount_in
+              0, // amount_out
+              newBalance,
+              store_id,
+              req.user?.id || 1
+            ]
+          );
+
+          // Update product current_stock if needed
+          await dbConnection.query(
+            'UPDATE products SET current_stock = current_stock + ? WHERE id = ?',
+            [quantity, product_id]
+          );
+
+          processedItems.push({
+            product_id,
+            product_name: product.product_name,
+            quantity,
+            unit_cost: actualUnitCost,
+            total_cost: quantity * actualUnitCost,
+            new_inventory_quantity: newQuantity
+          });
+
+        } catch (itemError) {
+          console.error(`Error processing item:`, itemError);
+          errors.push(`Failed to process item: ${itemError.message}`);
+        }
+      }
+
+      if (errors.length > 0 && processedItems.length === 0) {
+        // If no items were processed successfully, rollback
+        await dbConnection.rollback();
+        return res.status(400).json({
+          success: false,
+          error: 'Failed to process any items',
+          details: errors
+        });
+      }
+
+      // Update order status to indicate products were returned
+      await dbConnection.query(
+        'UPDATE sales_orders SET my_status = 6, notes = CONCAT(COALESCE(notes, ""), " | Products returned to stock on ", NOW()) WHERE id = ?',
+        [order_id]
+      );
+
+      await dbConnection.commit();
+
+      res.json({
+        success: true,
+        message: 'Products successfully received back to stock',
+        data: {
+          order_id,
+          store_id,
+          store_name: storeResult[0].store_name,
+          processed_items: processedItems,
+          errors: errors.length > 0 ? errors : undefined
+        }
+      });
+
+    } catch (error) {
+      await dbConnection.rollback();
+      console.error('Error receiving products to stock:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to receive products to stock'
+      });
+    } finally {
+      dbConnection.release();
+    }
   }
 };
 

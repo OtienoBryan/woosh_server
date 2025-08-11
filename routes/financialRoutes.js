@@ -218,6 +218,9 @@ router.get('/stock-take-history', storeController.getStockTakeHistory);
 router.get('/stock-take/:stock_take_id/items', storeController.getStockTakeItems);
 router.post('/stores/update-stock-quantity', storeController.updateStockQuantity);
 
+// Receive to Stock from Cancelled Orders
+router.post('/receive-to-stock', storeController.receiveToStockFromOrder);
+
 router.get('/categories', getAllCategories);
 router.post('/categories', addCategory);
 router.put('/categories/:id', updateCategory);

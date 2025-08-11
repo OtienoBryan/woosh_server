@@ -1,5 +1,47 @@
 const db = require('../database/db');
 
+// Helper function to record inventory transactions
+const recordInventoryTransaction = async ({ storeId, productId, quantity, referenceId, notes, db, newQuantity }) => {
+  try {
+    // Generate a unique reference number
+    const timestamp = Date.now();
+    const reference = `CNR-${timestamp}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
+    
+    // Get product details for unit cost (attempt to fetch from credit note item or use default)
+    let unitCost = 0;
+    let totalCost = 0;
+    
+    try {
+      const [productData] = await db.query('SELECT cost_price FROM products WHERE id = ?', [productId]);
+      if (productData.length > 0) {
+        unitCost = productData[0].cost_price || 0;
+        totalCost = unitCost * quantity;
+      }
+    } catch (productError) {
+      console.log('Could not fetch product cost, using 0');
+    }
+
+    // Use the new quantity passed from the caller (after inventory update)
+    const newBalance = newQuantity || quantity;
+
+    // Insert into the actual inventory_transactions table structure
+    await db.query(`
+      INSERT INTO inventory_transactions 
+      (product_id, reference, amount_in, amount_out, balance, date_received, store_id, unit_cost, total_cost, staff_id) 
+      VALUES (?, ?, ?, 0.00, ?, NOW(), ?, ?, ?, 1)
+    `, [productId, reference, quantity, newBalance, storeId, unitCost, totalCost]);
+    
+    console.log(`✅ Inventory transaction recorded: ${reference} - ${quantity} units received`);
+    
+  } catch (error) {
+    console.error('Error recording inventory transaction:', error.message);
+    // Don't throw - allow the main operation to continue
+    
+    // Fallback: log the transaction details
+    console.log(`📝 Inventory transaction (failed to record): Store ${storeId}, Product ${productId}, Qty +${quantity}, Reference: Credit Note ${referenceId}`);
+  }
+};
+
 const creditNoteController = {
   // Get all credit notes
   getAllCreditNotes: async (req, res) => {
@@ -10,9 +52,13 @@ const creditNoteController = {
           c.name as customer_name,
           c.email,
           c.contact,
-          c.address
+          c.address,
+          s.name as staff_name,
+          creator.name as creator_name
         FROM credit_notes cn
         LEFT JOIN Clients c ON cn.client_id = c.id
+        LEFT JOIN staff s ON cn.received_by = s.id
+        LEFT JOIN staff creator ON cn.created_by = creator.id
         ORDER BY cn.created_at DESC
       `);
       res.json({ success: true, data: rows });
@@ -32,9 +78,13 @@ const creditNoteController = {
           c.name as customer_name,
           c.email,
           c.contact,
-          c.address
+          c.address,
+          s.name as staff_name,
+          creator.name as creator_name
         FROM credit_notes cn
         LEFT JOIN Clients c ON cn.client_id = c.id
+        LEFT JOIN staff s ON cn.received_by = s.id
+        LEFT JOIN staff creator ON cn.created_by = creator.id
         WHERE cn.id = ?
       `, [id]);
       
@@ -353,9 +403,13 @@ const creditNoteController = {
       const [rows] = await db.query(`
         SELECT 
           cn.*,
-          so.so_number as original_invoice_number
+          so.so_number as original_invoice_number,
+          s.name as staff_name,
+          creator.name as creator_name
         FROM credit_notes cn
         LEFT JOIN sales_orders so ON cn.original_invoice_id = so.id
+        LEFT JOIN staff s ON cn.received_by = s.id
+        LEFT JOIN staff creator ON cn.created_by = creator.id
         WHERE cn.client_id = ?
         ORDER BY cn.created_at DESC
       `, [customerId]);
@@ -364,6 +418,160 @@ const creditNoteController = {
     } catch (error) {
       console.error('Error fetching customer credit notes:', error);
       res.status(500).json({ success: false, error: 'Failed to fetch customer credit notes' });
+    }
+  },
+
+  // Receive back items to stock from credit note
+  receiveBackToStock: async (req, res) => {
+    try {
+      // Check if user has stock role
+      if (req.user.role !== 'stock' && req.user.role !== 'admin') {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. Only users with stock role can receive items back to stock.'
+        });
+      }
+
+      const { creditNoteId, items } = req.body;
+
+      if (!creditNoteId || !items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Credit note ID and items are required'
+        });
+      }
+
+      // Validate items structure
+      for (const item of items) {
+        if (!item.productId || !item.quantity || !item.storeId) {
+          return res.status(400).json({
+            success: false,
+            error: 'Each item must have productId, quantity, and storeId'
+          });
+        }
+      }
+
+      // Verify credit note exists
+      const [creditNote] = await db.query(
+        'SELECT id, status FROM credit_notes WHERE id = ?',
+        [creditNoteId]
+      );
+
+      if (creditNote.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Credit note not found'
+        });
+      }
+
+      // Process each item - update store inventory
+      console.log('📦 Received items for processing:', items);
+      for (const item of items) {
+        const { productId, quantity, storeId } = item;
+        console.log(`📦 Processing item:`, { productId, quantity, storeId, itemType: typeof quantity });
+        
+        // Ensure quantity is a number
+        const numericQuantity = Number(quantity);
+        if (isNaN(numericQuantity) || numericQuantity <= 0) {
+          console.error(`❌ Invalid quantity for product ${productId}: ${quantity}`);
+          continue; // Skip this item
+        }
+
+        // Check if the product exists in the store inventory
+        const [existingInventory] = await db.query(
+          'SELECT id, quantity FROM store_inventory WHERE store_id = ? AND product_id = ?',
+          [storeId, productId]
+        );
+
+        console.log(`🔍 Processing item: Product ${productId}, Store ${storeId}, Quantity ${numericQuantity}`);
+        console.log(`🔍 Existing inventory:`, existingInventory);
+
+        let finalQuantity;
+        if (existingInventory.length === 0) {
+          // Create new inventory record
+          finalQuantity = numericQuantity;
+          console.log(`➕ Creating new inventory: ${finalQuantity} units`);
+          await db.query(
+            'INSERT INTO store_inventory (store_id, product_id, quantity, created_at, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+            [storeId, productId, numericQuantity]
+          );
+        } else {
+          // Update existing inventory
+          const oldQuantity = existingInventory[0].quantity;
+          finalQuantity = oldQuantity + numericQuantity;
+          console.log(`🔄 Updating inventory: ${oldQuantity} + ${numericQuantity} = ${finalQuantity} units`);
+          await db.query(
+            'UPDATE store_inventory SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE store_id = ? AND product_id = ?',
+            [finalQuantity, storeId, productId]
+          );
+        }
+
+        console.log(`✅ Final inventory quantity: ${finalQuantity}`);
+
+        // Record the inventory transaction AFTER updating inventory
+        await recordInventoryTransaction({
+          storeId,
+          productId,
+          quantity: numericQuantity,
+          referenceId: creditNoteId,
+          notes: `Received back from credit note ${creditNote[0]?.credit_note_number || creditNoteId}`,
+          db,
+          newQuantity: finalQuantity // Pass the final quantity for accurate balance
+        });
+      }
+
+      // Update credit note my_status to 1 (processed/received back to stock)
+      // Also update received_by and received_at with the logged-in user's ID and current timestamp
+      try {
+        const userId = req.user.id || req.user.userId || 1; // Default to 1 if user ID not available
+        
+        // Get current local date and time in your timezone
+        const now = new Date();
+        const currentTimestamp = now.getFullYear() + '-' + 
+          String(now.getMonth() + 1).padStart(2, '0') + '-' + 
+          String(now.getDate()).padStart(2, '0') + ' ' + 
+          String(now.getHours()).padStart(2, '0') + ':' + 
+          String(now.getMinutes()).padStart(2, '0') + ':' + 
+          String(now.getSeconds()).padStart(2, '0');
+        
+        await db.query(
+          'UPDATE credit_notes SET my_status = 1, received_by = ?, received_at = ? WHERE id = ?',
+          [userId, currentTimestamp, creditNoteId]
+        );
+        
+        console.log(`✅ Credit note ${creditNoteId} updated: my_status=1, received_by=${userId}, received_at=${currentTimestamp}`);
+      } catch (statusError) {
+        // If columns don't exist, log but continue
+        console.log('Error updating credit note status:', statusError.message);
+        
+        // Try updating just my_status if the new columns don't exist
+        try {
+          await db.query(
+            'UPDATE credit_notes SET my_status = 1 WHERE id = ?',
+            [creditNoteId]
+          );
+          console.log(`✅ Credit note ${creditNoteId} updated: my_status=1 (legacy mode)`);
+        } catch (legacyError) {
+          console.log('my_status column not available in credit_notes table:', legacyError.message);
+        }
+      }
+
+      res.json({
+        success: true,
+        message: 'Items successfully received back to inventory',
+        data: {
+          creditNoteId,
+          itemsProcessed: items.length,
+          totalQuantity: items.reduce((sum, item) => sum + item.quantity, 0)
+        }
+      });
+
+    } catch (error) {
+      console.error('Error receiving back to stock:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to receive back items to stock'
+      });
     }
   }
 };

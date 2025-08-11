@@ -955,8 +955,8 @@ const storeController = {
 
       // Update order status to indicate products were returned
       await dbConnection.query(
-        'UPDATE sales_orders SET my_status = 6, notes = CONCAT(COALESCE(notes, ""), " | Products returned to stock on ", NOW()) WHERE id = ?',
-        [order_id]
+        'UPDATE sales_orders SET my_status = 6, received_by = ?, returned_at = NOW(), notes = CONCAT(COALESCE(notes, ""), " | Products returned to stock on ", NOW()) WHERE id = ?',
+        [req.user?.id || 1, order_id]
       );
 
       await dbConnection.commit();
@@ -969,6 +969,8 @@ const storeController = {
           store_id,
           store_name: storeResult[0].store_name,
           processed_items: processedItems,
+          received_by: req.user?.id || 1,
+          returned_at: new Date(),
           errors: errors.length > 0 ? errors : undefined
         }
       });

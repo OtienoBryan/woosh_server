@@ -100,12 +100,14 @@ const salesOrderController = {
           u.full_name as created_by_name,
           sr.name as salesrep,
           r.name as rider_name,
-          r.contact as rider_contact
+          r.contact as rider_contact,
+          receiver.name as received_by_name
         FROM sales_orders so
         LEFT JOIN Clients c ON so.client_id = c.id
         LEFT JOIN users u ON so.created_by = u.id
         LEFT JOIN SalesRep sr ON so.salesrep = sr.id
         LEFT JOIN Riders r ON so.rider_id = r.id
+        LEFT JOIN staff receiver ON so.received_by = receiver.id
         ORDER BY so.created_at DESC
       `);
       

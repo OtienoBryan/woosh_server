@@ -53,4 +53,22 @@ INSERT INTO store_inventory (store_id, product_id, quantity)
 SELECT s.id, p.id, 0
 FROM stores s
 CROSS JOIN products p
-WHERE s.is_active = true AND p.is_active = true; 
+WHERE s.is_active = true AND p.is_active = true;
+
+-- Inventory Transfers Table (track stock transfers between stores)
+CREATE TABLE IF NOT EXISTS inventory_transfers (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  from_store_id INT NOT NULL,
+  to_store_id INT NOT NULL,
+  product_id INT NOT NULL,
+  quantity INT NOT NULL,
+  transfer_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  staff_id INT NOT NULL,
+  reference VARCHAR(100),
+  notes TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (from_store_id) REFERENCES stores(id) ON DELETE CASCADE,
+  FOREIGN KEY (to_store_id) REFERENCES stores(id) ON DELETE CASCADE,
+  FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+  FOREIGN KEY (staff_id) REFERENCES users(id)
+); 

@@ -431,123 +431,457 @@ const storeController = {
     }
   },
 
+  // Check transfer feasibility without actually performing the transfer
+  checkTransferFeasibility: async (req, res) => {
+    try {
+      const { from_store_id, to_store_id, items } = req.body;
+      
+      if (!from_store_id || !to_store_id || !items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Missing required fields: from_store_id, to_store_id, items'
+        });
+      }
+
+      // Validate stores exist
+      const [stores] = await connection.query(
+        'SELECT id, store_name FROM stores WHERE id IN (?, ?)',
+        [from_store_id, to_store_id]
+      );
+
+      if (stores.length !== 2) {
+        return res.status(400).json({
+          success: false,
+          error: 'One or both stores not found'
+        });
+      }
+
+      const fromStore = stores.find(s => s.id == from_store_id);
+      const toStore = stores.find(s => s.id == to_store_id);
+
+      // Check each item's availability
+      const feasibilityResults = [];
+      let isFeasible = true;
+      let totalRequested = 0;
+      let totalAvailable = 0;
+
+      for (const item of items) {
+        const { product_id, quantity } = item;
+        
+        // Get product details and current inventory
+        const [rows] = await connection.query(
+          `SELECT si.quantity, p.product_name, p.product_code, p.category
+           FROM store_inventory si 
+           LEFT JOIN products p ON si.product_id = p.id 
+           WHERE si.store_id = ? AND si.product_id = ?`,
+          [from_store_id, product_id]
+        );
+        
+        const available = rows.length > 0 ? Number(rows[0].quantity) : 0;
+        const productName = rows.length > 0 ? rows[0].product_name : `Product ID: ${product_id}`;
+        const productCode = rows.length > 0 ? rows[0].product_code : 'N/A';
+        const category = rows.length > 0 ? rows[0].category : 'N/A';
+        
+        const hasSufficientStock = available >= quantity;
+        const shortfall = hasSufficientStock ? 0 : quantity - available;
+        
+        if (!hasSufficientStock) {
+          isFeasible = false;
+        }
+
+        totalRequested += quantity;
+        totalAvailable += Math.min(available, quantity);
+
+        feasibilityResults.push({
+          product_id,
+          product_name: productName,
+          product_code: productCode,
+          category,
+          requested: quantity,
+          available,
+          shortfall,
+          has_sufficient_stock: hasSufficientStock,
+          status: hasSufficientStock ? 'Available' : 'Insufficient'
+        });
+      }
+
+      // Calculate summary
+      const summary = {
+        total_products: items.length,
+        total_requested: totalRequested,
+        total_available: totalAvailable,
+        products_with_sufficient_stock: feasibilityResults.filter(item => item.has_sufficient_stock).length,
+        products_with_insufficient_stock: feasibilityResults.filter(item => !item.has_sufficient_stock).length,
+        overall_feasible: isFeasible
+      };
+
+      res.json({
+        success: true,
+        data: {
+          from_store: {
+            id: from_store_id,
+            name: fromStore.store_name
+          },
+          to_store: {
+            id: to_store_id,
+            name: toStore.store_name
+          },
+          feasibility_results: feasibilityResults,
+          summary
+        }
+      });
+
+    } catch (error) {
+      console.error('Error checking transfer feasibility:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to check transfer feasibility'
+      });
+    }
+  },
+
   // Record a stock transfer
   recordStockTransfer: async (req, res) => {
-    const connection = await connection.getConnection();
+    let dbConnection;
     try {
-      await connection.beginTransaction();
+      console.log('🚀 Starting stock transfer with data:', JSON.stringify(req.body, null, 2));
+      
+      dbConnection = await connection.getConnection();
+      console.log('✅ Database connection acquired');
+      
+      await dbConnection.beginTransaction();
+      console.log('✅ Transaction started');
+      
       const { from_store_id, to_store_id, transfer_date, staff_id, reference, notes, items } = req.body;
+      
+      // Validate required fields
+      if (!from_store_id || !to_store_id || !transfer_date || !staff_id || !items) {
+        console.log('❌ Missing required fields:', { from_store_id, to_store_id, transfer_date, staff_id, items: items ? 'present' : 'missing' });
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Missing required fields: from_store_id, to_store_id, transfer_date, staff_id, items' 
+        });
+      }
+      
       if (!Array.isArray(items) || items.length === 0) {
+        console.log('❌ No items provided for transfer');
         return res.status(400).json({ success: false, error: 'No items provided for transfer' });
       }
+      
+      console.log(`📦 Processing ${items.length} items for transfer from store ${from_store_id} to store ${to_store_id}`);
+      
       // Check if all products have enough quantity in the source store
       const insufficient = [];
       for (const item of items) {
         const { product_id, quantity } = item;
-        const [rows] = await connection.query(
-          'SELECT quantity FROM store_inventory WHERE store_id = ? AND product_id = ?',
+        console.log(`🔍 Checking availability for product ${product_id}, quantity ${quantity}`);
+        
+        // Get product details and current inventory
+        const [rows] = await dbConnection.query(
+          `SELECT si.quantity, p.product_name, p.product_code 
+           FROM store_inventory si 
+           LEFT JOIN products p ON si.product_id = p.id 
+           WHERE si.store_id = ? AND si.product_id = ?`,
           [from_store_id, product_id]
         );
+        
         const available = rows.length > 0 ? Number(rows[0].quantity) : 0;
+        const productName = rows.length > 0 ? rows[0].product_name : `Product ID: ${product_id}`;
+        const productCode = rows.length > 0 ? rows[0].product_code : 'N/A';
+        
+        console.log(`📊 Product ${product_id} (${productName}): Available ${available}, Requested ${quantity}`);
+        
         if (available < quantity) {
-          insufficient.push({ product_id, requested: quantity, available });
+          insufficient.push({ 
+            product_id, 
+            product_name: productName,
+            product_code: productCode,
+            requested: quantity, 
+            available,
+            shortfall: quantity - available
+          });
+          console.log(`❌ Insufficient quantity for product ${product_id} (${productName})`);
         }
       }
+      
       if (insufficient.length > 0) {
-        await connection.rollback();
+        console.log('❌ Insufficient quantities found:', insufficient);
+        await dbConnection.rollback();
+        
+        // Create detailed error message
+        const errorDetails = insufficient.map(item => 
+          `• ${item.product_name} (${item.product_code}): Requested ${item.requested}, Available ${item.available}, Shortfall ${item.shortfall}`
+        ).join('\n');
+        
         return res.status(400).json({
           success: false,
           error: 'Insufficient quantity for one or more products',
-          details: insufficient
+          message: `Cannot complete transfer due to insufficient stock:\n${errorDetails}`,
+          details: insufficient,
+          summary: {
+            total_products_affected: insufficient.length,
+            total_shortfall: insufficient.reduce((sum, item) => sum + item.shortfall, 0)
+          }
         });
       }
+      
+      console.log('✅ All products have sufficient quantities');
+      
+      // Process each item
       for (const item of items) {
         const { product_id, quantity } = item;
+        console.log(`🔄 Processing product ${product_id}, quantity ${quantity}`);
+        
         // Deduct from source store
-        await connection.query(
+        console.log(`📤 Deducting ${quantity} from store ${from_store_id}`);
+        await dbConnection.query(
           `UPDATE store_inventory SET quantity = quantity - ? WHERE store_id = ? AND product_id = ?`,
           [quantity, from_store_id, product_id]
         );
+        console.log(`✅ Deducted from source store`);
+        
         // Add to destination store
-        await connection.query(
+        console.log(`📥 Adding ${quantity} to store ${to_store_id}`);
+        await dbConnection.query(
           `INSERT INTO store_inventory (store_id, product_id, quantity)
            VALUES (?, ?, ?)
            ON DUPLICATE KEY UPDATE quantity = quantity + ?`,
           [to_store_id, product_id, quantity, quantity]
         );
+        console.log(`✅ Added to destination store`);
+        
         // Record in inventory_transfers
-        await connection.query(
+        console.log(`📝 Recording transfer in inventory_transfers table`);
+        await dbConnection.query(
           `INSERT INTO inventory_transfers
             (from_store_id, to_store_id, product_id, quantity, transfer_date, staff_id, reference, notes)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [from_store_id, to_store_id, product_id, quantity, transfer_date, staff_id, reference, notes]
         );
+        console.log(`✅ Transfer recorded in inventory_transfers`);
+        
         // --- Calculate running balance for OUT (source store) ---
-        const [lastOut] = await connection.query(
+        console.log(`💾 Calculating running balance for source store ${from_store_id}`);
+        const [lastOut] = await dbConnection.query(
           'SELECT balance FROM inventory_transactions WHERE product_id = ? AND store_id = ? ORDER BY date_received DESC, id DESC LIMIT 1',
           [product_id, from_store_id]
         );
         const prevOutBalance = lastOut.length > 0 ? parseFloat(lastOut[0].balance) : 0;
         const newOutBalance = prevOutBalance - quantity;
+        console.log(`📊 Source store balance: ${prevOutBalance} -> ${newOutBalance}`);
+        
         // Record in inventory_transactions (out)
-        await connection.query(
+        await dbConnection.query(
           `INSERT INTO inventory_transactions
             (product_id, reference, amount_in, amount_out, balance, date_received, store_id, staff_id)
            VALUES (?, ?, 0, ?, ?, ?, ?, ?)`,
           [product_id, reference || 'Stock Transfer', quantity, newOutBalance, transfer_date, from_store_id, staff_id]
         );
+        console.log(`✅ Source store transaction recorded`);
+        
         // --- Calculate running balance for IN (destination store) ---
-        const [lastIn] = await connection.query(
+        console.log(`💾 Calculating running balance for destination store ${to_store_id}`);
+        const [lastIn] = await dbConnection.query(
           'SELECT balance FROM inventory_transactions WHERE product_id = ? AND store_id = ? ORDER BY date_received DESC, id DESC LIMIT 1',
           [product_id, to_store_id]
         );
         const prevInBalance = lastIn.length > 0 ? parseFloat(lastIn[0].balance) : 0;
         const newInBalance = prevInBalance + quantity;
+        console.log(`📊 Destination store balance: ${prevInBalance} -> ${newInBalance}`);
+        
         // Record in inventory_transactions (in)
-        await connection.query(
+        await dbConnection.query(
           `INSERT INTO inventory_transactions
             (product_id, reference, amount_in, amount_out, balance, date_received, store_id, staff_id)
            VALUES (?, ?, ?, 0, ?, ?, ?, ?)`,
           [product_id, reference || 'Stock Transfer', quantity, newInBalance, transfer_date, to_store_id, staff_id]
         );
+        console.log(`✅ Destination store transaction recorded`);
       }
-      await connection.commit();
+      
+      console.log('💾 Committing transaction...');
+      await dbConnection.commit();
+      console.log('✅ Stock transfer completed successfully');
       res.json({ success: true, message: 'Stock transfer recorded successfully' });
+      
     } catch (error) {
-      await connection.rollback();
-      console.error('Error recording stock transfer:', error);
-      res.status(500).json({ success: false, error: 'Failed to record stock transfer' });
+      console.error('❌ Error recording stock transfer:', error);
+      console.error('Error stack:', error.stack);
+      
+      if (dbConnection) {
+        try {
+          console.log('🔄 Rolling back transaction...');
+          await dbConnection.rollback();
+          console.log('✅ Transaction rolled back');
+        } catch (rollbackError) {
+          console.error('❌ Error during rollback:', rollbackError);
+        }
+      }
+      
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to record stock transfer',
+        details: error.message 
+      });
     } finally {
-      connection.release();
+      if (dbConnection) {
+        try {
+          console.log('🔌 Releasing database connection...');
+          dbConnection.release();
+          console.log('✅ Database connection released');
+        } catch (releaseError) {
+          console.error('❌ Error releasing connection:', releaseError);
+        }
+      }
+    }
+  },
+
+  // Get current stock levels for a specific store (useful for checking before transfers)
+  getStoreStockLevels: async (req, res) => {
+    try {
+      const { storeId } = req.params;
+      
+      if (!storeId) {
+        return res.status(400).json({
+          success: false,
+          error: 'Store ID is required'
+        });
+      }
+
+      const [rows] = await connection.query(`
+        SELECT 
+          si.product_id,
+          p.product_name,
+          p.product_code,
+          p.category,
+          p.unit_of_measure,
+          si.quantity as current_stock,
+          p.cost_price,
+          p.selling_price,
+          (si.quantity * p.cost_price) as stock_value
+        FROM store_inventory si
+        LEFT JOIN products p ON si.product_id = p.id
+        WHERE si.store_id = ? AND p.is_active = true
+        ORDER BY p.product_name
+      `, [storeId]);
+
+      // Get store information
+      const [storeInfo] = await connection.query(
+        'SELECT store_name, store_code, location FROM stores WHERE id = ?',
+        [storeId]
+      );
+
+      const store = storeInfo[0];
+      if (!store) {
+        return res.status(404).json({
+          success: false,
+          error: 'Store not found'
+        });
+      }
+
+      // Calculate summary statistics
+      const summary = {
+        total_products: rows.length,
+        total_items: rows.reduce((sum, item) => sum + item.current_stock, 0),
+        total_value: rows.reduce((sum, item) => sum + (item.stock_value || 0), 0),
+        low_stock_items: rows.filter(item => item.current_stock <= 5).length,
+        out_of_stock_items: rows.filter(item => item.current_stock === 0).length
+      };
+
+      res.json({
+        success: true,
+        data: {
+          store: {
+            id: storeId,
+            name: store.store_name,
+            code: store.store_code,
+            location: store.location
+          },
+          stock_levels: rows,
+          summary
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching store stock levels:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to fetch store stock levels'
+      });
     }
   },
 
   // Get transfer history
   getTransferHistory: async (req, res) => {
     try {
-      const { from_store_id, to_store_id, product_id, start_date, end_date } = req.query;
-      let sql = `
-        SELECT t.*, 
-          fs.store_name as from_store_name, 
-          ts.store_name as to_store_name, 
-          p.product_name, 
-          u.full_name as staff_name
+      const { from_store_id, to_store_id, product_id, start_date, end_date, search, page = 1, limit = 20 } = req.query;
+      
+      // Calculate offset for pagination
+      const offset = (parseInt(page) - 1) * parseInt(limit);
+      
+      // Build the base WHERE clause
+      let whereClause = 'WHERE 1=1';
+      const params = [];
+      if (from_store_id) { whereClause += ' AND t.from_store_id = ?'; params.push(from_store_id); }
+      if (to_store_id) { whereClause += ' AND t.to_store_id = ?'; params.push(to_store_id); }
+      if (product_id) { whereClause += ' AND t.product_id = ?'; params.push(product_id); }
+      if (start_date) { whereClause += ' AND t.transfer_date >= ?'; params.push(start_date); }
+      if (end_date) { whereClause += ' AND t.transfer_date <= ?'; params.push(end_date); }
+      if (search) { 
+        whereClause += ` AND (t.reference LIKE ? OR t.notes LIKE ? OR p.product_name LIKE ?)`;
+        const searchTerm = `%${search}%`;
+        params.push(searchTerm, searchTerm, searchTerm);
+      }
+      
+      // Get total count for pagination
+      const countSql = `
+        SELECT COUNT(*) as total
         FROM inventory_transfers t
         LEFT JOIN stores fs ON t.from_store_id = fs.id
         LEFT JOIN stores ts ON t.to_store_id = ts.id
         LEFT JOIN products p ON t.product_id = p.id
-        LEFT JOIN users u ON t.staff_id = u.id
-        WHERE 1=1
+        LEFT JOIN staff s ON t.staff_id = s.id
+        ${whereClause}
       `;
-      const params = [];
-      if (from_store_id) { sql += ' AND t.from_store_id = ?'; params.push(from_store_id); }
-      if (to_store_id) { sql += ' AND t.to_store_id = ?'; params.push(to_store_id); }
-      if (product_id) { sql += ' AND t.product_id = ?'; params.push(product_id); }
-      if (start_date) { sql += ' AND t.transfer_date >= ?'; params.push(start_date); }
-      if (end_date) { sql += ' AND t.transfer_date <= ?'; params.push(end_date); }
-      sql += ' ORDER BY t.transfer_date DESC, t.id DESC';
-      const [rows] = await connection.query(sql, params);
-      res.json({ success: true, data: rows });
+      
+      const [countRows] = await connection.query(countSql, params);
+      const total = countRows[0].total;
+      
+      // Build the main query with pagination
+      const mainSql = `
+        SELECT t.*, 
+          fs.store_name as from_store_name, 
+          ts.store_name as to_store_name, 
+          p.product_name, 
+          s.name as staff_name
+        FROM inventory_transfers t
+        LEFT JOIN stores fs ON t.from_store_id = fs.id
+        LEFT JOIN stores ts ON t.to_store_id = ts.id
+        LEFT JOIN products p ON t.product_id = p.id
+        LEFT JOIN staff s ON t.staff_id = s.id
+        ${whereClause}
+        ORDER BY t.transfer_date DESC, t.id DESC 
+        LIMIT ? OFFSET ?
+      `;
+      
+      // Add pagination parameters
+      const mainParams = [...params, parseInt(limit), offset];
+      
+      const [rows] = await connection.query(mainSql, mainParams);
+      
+      // Calculate pagination info
+      const totalPages = Math.ceil(total / parseInt(limit));
+      const currentPage = parseInt(page);
+      
+      res.json({ 
+        success: true, 
+        data: rows,
+        pagination: {
+          page: currentPage,
+          limit: parseInt(limit),
+          total,
+          totalPages
+        }
+      });
     } catch (error) {
       console.error('Error fetching transfer history:', error);
       res.status(500).json({ success: false, error: 'Failed to fetch transfer history' });
@@ -555,16 +889,17 @@ const storeController = {
   },
 
   recordStockTake: async (req, res) => {
-    const connection = await connection.getConnection();
+    let dbConnection;
     try {
-      await connection.beginTransaction();
+      dbConnection = await connection.getConnection();
+      await dbConnection.beginTransaction();
       const { store_id, items, date, staff_id, notes } = req.body;
       if (!store_id || !Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ success: false, error: 'Missing store_id or items' });
       }
       const stockTakeDate = date || new Date().toISOString().split('T')[0];
       // Insert stock_takes event
-      const [stockTakeResult] = await connection.query(
+      const [stockTakeResult] = await dbConnection.query(
         `INSERT INTO stock_takes (store_id, staff_id, take_date, notes) VALUES (?, ?, ?, ?)`,
         [store_id, staff_id, stockTakeDate, notes || null]
       );
@@ -573,49 +908,61 @@ const storeController = {
       for (const item of items) {
         const { product_id, counted_quantity } = item;
         // Get current system quantity
-        const [rows] = await connection.query(
+        const [rows] = await dbConnection.query(
           'SELECT quantity FROM store_inventory WHERE store_id = ? AND product_id = ?',
           [store_id, product_id]
         );
         const system_quantity = rows.length > 0 ? Number(rows[0].quantity) : 0;
         const diff = counted_quantity - system_quantity;
         // Insert into stock_take_items
-        await connection.query(
+        await dbConnection.query(
           `INSERT INTO stock_take_items (stock_take_id, product_id, system_quantity, counted_quantity, difference)
            VALUES (?, ?, ?, ?, ?)`,
           [stock_take_id, product_id, system_quantity, counted_quantity, diff]
         );
         if (diff !== 0) {
           // Get last balance for this product/store
-          const [lastTrans] = await connection.query(
+          const [lastTrans] = await dbConnection.query(
             'SELECT balance FROM inventory_transactions WHERE product_id = ? AND store_id = ? ORDER BY date_received DESC, id DESC LIMIT 1',
             [product_id, store_id]
           );
           const prevBalance = lastTrans.length > 0 ? parseFloat(lastTrans[0].balance) : system_quantity;
           const newBalance = prevBalance + diff;
           // Insert adjustment transaction
-          await connection.query(
+          await dbConnection.query(
             `INSERT INTO inventory_transactions
               (product_id, reference, amount_in, amount_out, balance, date_received, store_id, staff_id)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
             [product_id, 'Stock Take Adjustment', diff > 0 ? diff : 0, diff < 0 ? -diff : 0, newBalance, stockTakeDate, store_id, staff_id]
           );
           // Update store_inventory
-          await connection.query(
+          await dbConnection.query(
             `UPDATE store_inventory SET quantity = ? WHERE store_id = ? AND product_id = ?`,
             [counted_quantity, store_id, product_id]
           );
           adjustments.push({ product_id, system_quantity, counted_quantity, diff });
         }
       }
-      await connection.commit();
+      await dbConnection.commit();
       res.json({ success: true, message: 'Stock take recorded', adjustments, stock_take_id });
     } catch (error) {
-      await connection.rollback();
+      if (dbConnection) {
+        try {
+          await dbConnection.rollback();
+        } catch (rollbackError) {
+          console.error('Error during rollback:', rollbackError);
+        }
+      }
       console.error('Error recording stock take:', error);
       res.status(500).json({ success: false, error: 'Failed to record stock take' });
     } finally {
-      connection.release();
+      if (dbConnection) {
+        try {
+          dbConnection.release();
+        } catch (releaseError) {
+          console.error('Error releasing connection:', releaseError);
+        }
+      }
     }
   },
 

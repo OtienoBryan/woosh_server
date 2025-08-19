@@ -343,6 +343,33 @@ const receivablesController = {
       console.error('Error fetching pending receipts for invoice:', error);
       res.status(500).json({ success: false, error: 'Failed to fetch pending receipts' });
     }
+  },
+
+  // Get outstanding balance for a specific client
+  getClientOutstandingBalance: async (req, res) => {
+    try {
+      const { clientId } = req.params;
+      
+      // Calculate outstanding balance from client_ledger
+      const [balanceResult] = await db.query(`
+        SELECT COALESCE(SUM(debit - credit), 0) as outstanding_balance
+        FROM client_ledger 
+        WHERE client_id = ?
+      `, [clientId]);
+      
+      const outstandingBalance = parseFloat(balanceResult[0]?.outstanding_balance || 0);
+      
+      res.json({ 
+        success: true, 
+        data: { 
+          outstanding_balance: outstandingBalance,
+          client_id: parseInt(clientId)
+        } 
+      });
+    } catch (error) {
+      console.error('Error fetching client outstanding balance:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch client outstanding balance' });
+    }
   }
 };
 

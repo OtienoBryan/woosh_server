@@ -166,6 +166,7 @@ router.post('/receivables/payment', receivablesController.makeCustomerPayment);
 router.post('/receivables/confirm-payment', receivablesController.confirmCustomerPayment);
 router.get('/receipts', receivablesController.listReceipts);
 router.get('/receipts/invoice/:invoice_id/pending', receivablesController.getPendingReceiptsForInvoice);
+router.get('/clients/:clientId/outstanding-balance', receivablesController.getClientOutstandingBalance);
 
 // Reports Routes
 router.get('/reports/profit-loss', reportsController.getProfitLossReport);

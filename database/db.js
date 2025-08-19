@@ -12,16 +12,26 @@ const pool = mysql.createPool({
   acquireTimeout: 60000, // 60 seconds
   timeout: 60000, // 60 seconds
   reconnect: true,
-  ssl: false // Temporarily disable SSL to test connection
+  ssl: false, // Temporarily disable SSL to test connection
+  timezone: '+00:00', // Force UTC timezone
+  dateStrings: true // Return dates as strings to avoid timezone conversion
 });
 
-// Test database connection
-pool.getConnection((err, connection) => {
+// Test database connection and set timezone
+pool.getConnection(async (err, connection) => {
   if (err) {
     console.error('Error connecting to the database:', err);
     return;
   }
-  console.log('Successfully connected to MySQL database');
+  
+  try {
+    // Set timezone to UTC to ensure consistent time handling
+    await connection.query("SET time_zone = '+00:00'");
+    console.log('Successfully connected to MySQL database and set timezone to UTC');
+  } catch (timezoneErr) {
+    console.warn('Warning: Could not set timezone to UTC:', timezoneErr.message);
+  }
+  
   connection.release();
 });
 

@@ -10,6 +10,7 @@ exports.uploadAvatarMiddleware = upload.single('avatar');
 exports.uploadAvatar = async (req, res) => {
   const { id } = req.params;
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  
   try {
     // Convert buffer to base64 for Cloudinary
     const b64 = Buffer.from(req.file.buffer).toString('base64');
@@ -21,7 +22,14 @@ exports.uploadAvatar = async (req, res) => {
       resource_type: 'image',
     });
     const avatarUrl = result.secure_url;
-    await db.query('UPDATE staff SET photo_url = ? WHERE id = ?', [avatarUrl, id]);
+    
+    // Update staff table
+    const [staffResult] = await db.query('UPDATE staff SET photo_url = ? WHERE id = ?', [avatarUrl, id]);
+    
+    if (staffResult.affectedRows === 0) {
+      return res.status(404).json({ error: 'Staff member not found' });
+    }
+    
     res.json({ url: avatarUrl });
   } catch (err) {
     console.error('Cloudinary upload error:', err);

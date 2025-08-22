@@ -539,6 +539,221 @@ const getStockHistory = async (req, res) => {
   }
 };
 
+// Add bulk merchandise stock
+const addBulkStock = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation failed',
+        details: errors.array()
+      });
+    }
+
+    const { store_id, items, general_notes } = req.body;
+    const received_by = req.user.id;
+    
+    // Check if store exists
+    const [store] = await db.execute(
+      'SELECT id FROM stores WHERE id = ? AND is_active = TRUE',
+      [store_id]
+    );
+    
+    if (store.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid store ID'
+      });
+    }
+
+    // Validate all merchandise items exist
+    const merchandiseIds = items.map(item => item.merchandise_id);
+    const placeholders = merchandiseIds.map(() => '?').join(',');
+    const [merchandise] = await db.execute(
+      `SELECT id FROM merchandise WHERE id IN (${placeholders}) AND is_active = TRUE`,
+      merchandiseIds
+    );
+    
+    if (merchandise.length !== items.length) {
+      return res.status(400).json({
+        success: false,
+        error: 'One or more merchandise items not found'
+      });
+    }
+
+    const stockRecords = [];
+    const ledgerRecords = [];
+    
+    // Process each item
+    for (const item of items) {
+      // Check if stock record already exists for this merchandise and store
+      const [existingStock] = await db.execute(
+        'SELECT id, quantity FROM merchandise_stock WHERE merchandise_id = ? AND store_id = ? AND is_active = TRUE',
+        [item.merchandise_id, store_id]
+      );
+
+      let stockRecord;
+      let newQuantity;
+
+      if (existingStock.length > 0) {
+        // Update existing stock record
+        newQuantity = existingStock[0].quantity + item.quantity;
+        await db.execute(
+          'UPDATE merchandise_stock SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+          [newQuantity, existingStock[0].id]
+        );
+        
+        // Fetch updated stock record
+        const [updatedStock] = await db.execute(
+          'SELECT * FROM merchandise_stock WHERE id = ?',
+          [existingStock[0].id]
+        );
+        stockRecord = updatedStock[0];
+      } else {
+        // Create new stock record
+        const [result] = await db.execute(
+          'INSERT INTO merchandise_stock (merchandise_id, store_id, quantity, received_by, notes) VALUES (?, ?, ?, ?, ?)',
+          [item.merchandise_id, store_id, item.quantity, received_by, item.notes || general_notes || null]
+        );
+        
+        // Fetch the created stock record
+        const [newStock] = await db.execute(
+          'SELECT * FROM merchandise_stock WHERE id = ?',
+          [result.insertId]
+        );
+        stockRecord = newStock[0];
+        newQuantity = item.quantity;
+      }
+
+      // Create ledger entry
+      const [ledgerResult] = await db.execute(
+        'INSERT INTO merchandise_ledger (merchandise_id, store_id, transaction_type, quantity, balance_after, reference_id, reference_type, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+          item.merchandise_id,
+          store_id,
+          'RECEIVE',
+          item.quantity,
+          newQuantity,
+          stockRecord.id,
+          'STOCK_RECEIPT',
+          item.notes || general_notes || 'Stock received',
+          received_by
+        ]
+      );
+
+      // Fetch ledger entry
+      const [ledgerEntry] = await db.execute(
+        'SELECT * FROM merchandise_ledger WHERE id = ?',
+        [ledgerResult.insertId]
+      );
+
+      stockRecords.push(stockRecord);
+      ledgerRecords.push(ledgerEntry[0]);
+    }
+    
+    res.status(201).json({
+      success: true,
+      data: {
+        stock: stockRecords,
+        ledger: ledgerRecords
+      },
+      message: `Successfully received ${items.length} merchandise items and updated inventory`
+    });
+  } catch (error) {
+    console.error('Error adding bulk merchandise stock:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to add bulk merchandise stock'
+    });
+  }
+};
+
+// Get current stock levels
+const getCurrentStock = async (req, res) => {
+  try {
+    const { merchandise_id, store_id } = req.query;
+    
+    let whereClause = 'WHERE ms.is_active = TRUE';
+    let params = [];
+    
+    if (merchandise_id) {
+      whereClause += ' AND ms.merchandise_id = ?';
+      params.push(merchandise_id);
+    }
+    
+    if (store_id) {
+      whereClause += ' AND ms.store_id = ?';
+      params.push(store_id);
+    }
+    
+    // Get current stock with merchandise and store details
+    const [rows] = await db.execute(
+      `SELECT ms.merchandise_id, ms.store_id, ms.quantity, 
+              m.name as merchandise_name, s.store_name
+       FROM merchandise_stock ms 
+       LEFT JOIN merchandise m ON ms.merchandise_id = m.id 
+       LEFT JOIN stores s ON ms.store_id = s.id 
+       ${whereClause} 
+       ORDER BY m.name, s.store_name`,
+      params
+    );
+    
+    res.json({
+      success: true,
+      data: rows
+    });
+  } catch (error) {
+    console.error('Error fetching current stock:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch current stock'
+    });
+  }
+};
+
+// Get merchandise ledger
+const getLedger = async (req, res) => {
+  try {
+    const { merchandise_id, store_id } = req.query;
+    
+    let whereClause = 'WHERE ml.id IS NOT NULL';
+    let params = [];
+    
+    if (merchandise_id) {
+      whereClause += ' AND ml.merchandise_id = ?';
+      params.push(merchandise_id);
+    }
+    
+    if (store_id) {
+      whereClause += ' AND ml.store_id = ?';
+      params.push(store_id);
+    }
+    
+    // Get ledger with merchandise and store details
+    const [rows] = await db.execute(
+      `SELECT ml.*, m.name as merchandise_name, s.store_name
+       FROM merchandise_ledger ml 
+       LEFT JOIN merchandise m ON ml.merchandise_id = m.id 
+       LEFT JOIN stores s ON ml.store_id = s.id 
+       ${whereClause} 
+       ORDER BY ml.created_at DESC`,
+      params
+    );
+    
+    res.json({
+      success: true,
+      data: rows
+    });
+  } catch (error) {
+    console.error('Error fetching merchandise ledger:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch merchandise ledger'
+    });
+  }
+};
+
 
 
 module.exports = {
@@ -558,5 +773,8 @@ module.exports = {
   
   // Stock operations
   addStock,
-  getStockHistory
+  addBulkStock,
+  getStockHistory,
+  getCurrentStock,
+  getLedger
 };

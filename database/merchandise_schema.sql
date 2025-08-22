@@ -47,6 +47,23 @@ INSERT INTO merchandise_categories (name, description) VALUES
 ('Promotional Items', 'Other promotional merchandise'),
 ('Uniforms', 'Employee uniforms and workwear');
 
+-- Merchandise Ledger Table for tracking all inventory movements
+CREATE TABLE merchandise_ledger (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    merchandise_id INT NOT NULL,
+    store_id INT NOT NULL,
+    transaction_type ENUM('RECEIVE', 'ISSUE', 'ADJUSTMENT', 'TRANSFER') NOT NULL,
+    quantity INT NOT NULL,
+    balance_after INT NOT NULL,
+    reference_id INT,
+    reference_type ENUM('STOCK_RECEIPT', 'STOCK_ISSUE', 'ADJUSTMENT', 'TRANSFER') NOT NULL,
+    notes TEXT,
+    created_by INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (merchandise_id) REFERENCES merchandise(id) ON DELETE RESTRICT,
+    FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE RESTRICT
+);
+
 -- Create indexes for better performance
 CREATE INDEX idx_merchandise_category ON merchandise(category_id);
 CREATE INDEX idx_merchandise_active ON merchandise(is_active);
@@ -55,3 +72,7 @@ CREATE INDEX idx_merchandise_categories_active ON merchandise_categories(is_acti
 CREATE INDEX idx_merchandise_stock_merchandise ON merchandise_stock(merchandise_id);
 CREATE INDEX idx_merchandise_stock_active ON merchandise_stock(is_active);
 CREATE INDEX idx_merchandise_stock_date ON merchandise_stock(received_date);
+CREATE INDEX idx_merchandise_ledger_merchandise ON merchandise_ledger(merchandise_id);
+CREATE INDEX idx_merchandise_ledger_store ON merchandise_ledger(store_id);
+CREATE INDEX idx_merchandise_ledger_type ON merchandise_ledger(transaction_type);
+CREATE INDEX idx_merchandise_ledger_date ON merchandise_ledger(created_at);

@@ -75,6 +75,31 @@ const validateStock = [
     .withMessage('Notes must be less than 500 characters')
 ];
 
+const validateBulkStock = [
+  body('store_id')
+    .isInt({ min: 1 })
+    .withMessage('Store ID must be a positive integer'),
+  body('items')
+    .isArray({ min: 1 })
+    .withMessage('At least one item must be provided'),
+  body('items.*.merchandise_id')
+    .isInt({ min: 1 })
+    .withMessage('Merchandise ID must be a positive integer'),
+  body('items.*.quantity')
+    .isInt({ min: 1 })
+    .withMessage('Quantity must be a positive integer'),
+  body('items.*.notes')
+    .optional()
+    .trim()
+    .isLength({ max: 500 })
+    .withMessage('Item notes must be less than 500 characters'),
+  body('general_notes')
+    .optional()
+    .trim()
+    .isLength({ max: 500 })
+    .withMessage('General notes must be less than 500 characters')
+];
+
 
 
 // Category routes
@@ -93,7 +118,10 @@ router.delete('/:id', merchandiseController.deleteMerchandise);
 
 // Stock routes
 router.post('/stock', validateStock, merchandiseController.addStock);
+router.post('/stock/bulk', validateBulkStock, merchandiseController.addBulkStock);
 router.get('/stock', merchandiseController.getStockHistory);
+router.get('/stock/current', merchandiseController.getCurrentStock);
+router.get('/ledger', merchandiseController.getLedger);
 
 
 module.exports = router;

@@ -6,12 +6,12 @@ const journeyPlanController = {
     try {
       const [plans] = await db.query(`
         SELECT jp.*, 
-               u.name as user_name,
+               s.name as user_name,
                c.name as client_name,
-               c.company_name as client_company_name,
+               c.name as client_company_name,
                r.name as route_name
         FROM JourneyPlan jp
-        LEFT JOIN users u ON jp.userId = u.id
+        LEFT JOIN SalesRep s ON jp.userId = s.id
         LEFT JOIN Clients c ON jp.clientId = c.id
         LEFT JOIN routes r ON jp.routeId = r.id
         ORDER BY jp.date DESC, jp.time ASC
@@ -31,7 +31,7 @@ const journeyPlanController = {
       const [plans] = await db.query(`
         SELECT jp.*, 
                c.name as client_name,
-               c.company_name as client_company_name,
+               c.name as client_company_name,
                c.address as client_address,
                r.name as route_name
         FROM JourneyPlan jp
@@ -54,15 +54,15 @@ const journeyPlanController = {
       const { id } = req.params;
       const [plans] = await db.query(`
         SELECT jp.*, 
-               u.name as user_name,
+               s.name as user_name,
                c.name as client_name,
-               c.company_name as client_company_name,
+               c.name as client_company_name,
                c.address as client_address,
                c.email as client_email,
                c.contact as client_contact,
                r.name as route_name
         FROM JourneyPlan jp
-        LEFT JOIN users u ON jp.userId = u.id
+        LEFT JOIN SalesRep s ON jp.userId = s.id
         LEFT JOIN Clients c ON jp.clientId = c.id
         LEFT JOIN routes r ON jp.routeId = r.id
         WHERE jp.id = ?
@@ -71,11 +71,10 @@ const journeyPlanController = {
       if (plans.length === 0) {
         return res.status(404).json({ success: false, message: 'Journey plan not found' });
       }
-      
       res.json({ success: true, data: plans[0] });
     } catch (error) {
       console.error('Get journey plan error:', error);
-      res.status(500).json({ success: false, message: 'Failed to fetch journey plan', error: error.message });
+      res.status(500).json({ success: false, message: 'Failed to fetch journey plans', error: error.message });
     }
   },
 

@@ -1,246 +1,291 @@
-const db = require('../database');
+const db = require('../database/db');
 
 const journeyPlanController = {
   // Get all journey plans
-  getJourneyPlans: async (req, res) => {
+  getAllJourneyPlans: async (req, res) => {
     try {
-      console.log('Fetching journey plans...');
-      
-      // First check if the table exists
-      const [tables] = await db.query('SHOW TABLES LIKE "journeyPlan"');
-      console.log('Table check result:', tables);
-
-      if (tables.length === 0) {
-        console.log('journeyPlan table does not exist');
-        return res.status(500).json({ message: 'journeyPlan table not found' });
-      }
-
-      // Check the table structure
-      const [columns] = await db.query('DESCRIBE journeyPlan');
-      console.log('Table structure:', columns);
-
-      // Get the data
-      const [journeyPlans] = await db.query(`
-        SELECT 
-          jp.*,
-          s.name as staffName,
-          s.phone as staffPhone,
-          p.name as premisesName
-        FROM journeyPlan jp
-        LEFT JOIN staff s ON jp.userId = s.id
-        LEFT JOIN premises p ON jp.premisesId = p.id
-        ORDER BY jp.date DESC
+      const [plans] = await db.query(`
+        SELECT jp.*, 
+               u.name as user_name,
+               c.name as client_name,
+               c.company_name as client_company_name,
+               r.name as route_name
+        FROM JourneyPlan jp
+        LEFT JOIN users u ON jp.userId = u.id
+        LEFT JOIN Clients c ON jp.clientId = c.id
+        LEFT JOIN routes r ON jp.routeId = r.id
+        ORDER BY jp.date DESC, jp.time ASC
       `);
       
-      console.log('Fetched journey plans:', journeyPlans);
-      res.json(journeyPlans);
+      res.json({ success: true, data: plans });
     } catch (error) {
-      console.error('Error fetching journey plans:', error);
-      console.error('Error details:', {
-        message: error.message,
-        code: error.code,
-        errno: error.errno,
-        sqlState: error.sqlState,
-        sqlMessage: error.sqlMessage
-      });
-      res.status(500).json({ 
-        message: 'Failed to fetch journey plans',
-        error: process.env.NODE_ENV === 'development' ? error.message : undefined
-      });
+      console.error('Get all journey plans error:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch journey plans', error: error.message });
     }
   },
 
-  // Get a single journey plan
+  // Get journey plans by user ID
+  getJourneyPlansByUser: async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const [plans] = await db.query(`
+        SELECT jp.*, 
+               c.name as client_name,
+               c.company_name as client_company_name,
+               c.address as client_address,
+               r.name as route_name
+        FROM JourneyPlan jp
+        LEFT JOIN Clients c ON jp.clientId = c.id
+        LEFT JOIN routes r ON jp.routeId = r.id
+        WHERE jp.userId = ?
+        ORDER BY jp.date ASC, jp.time ASC
+      `, [userId]);
+      
+      res.json({ success: true, data: plans });
+    } catch (error) {
+      console.error('Get journey plans by user error:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch journey plans', error: error.message });
+    }
+  },
+
+  // Get journey plan by ID
   getJourneyPlan: async (req, res) => {
     try {
-      const [journeyPlans] = await db.query(
-        `SELECT 
-          jp.*,
-          s.name as staffName,
-          s.phone as staffPhone,
-          p.name as premisesName,
-          st.name as serviceTypeName
-        FROM journeyPlan jp
-        LEFT JOIN staff s ON jp.userId = s.id
-        LEFT JOIN premises p ON jp.premisesId = p.id
-        LEFT JOIN service_types st ON jp.service_type_id = st.id
-        WHERE jp.id = ?`,
-        [req.params.id]
-      );
-
-      if (journeyPlans.length === 0) {
-        return res.status(404).json({ message: 'Journey plan not found' });
+      const { id } = req.params;
+      const [plans] = await db.query(`
+        SELECT jp.*, 
+               u.name as user_name,
+               c.name as client_name,
+               c.company_name as client_company_name,
+               c.address as client_address,
+               c.email as client_email,
+               c.contact as client_contact,
+               r.name as route_name
+        FROM JourneyPlan jp
+        LEFT JOIN users u ON jp.userId = u.id
+        LEFT JOIN Clients c ON jp.clientId = c.id
+        LEFT JOIN routes r ON jp.routeId = r.id
+        WHERE jp.id = ?
+      `, [id]);
+      
+      if (plans.length === 0) {
+        return res.status(404).json({ success: false, message: 'Journey plan not found' });
       }
-
-      res.json(journeyPlans[0]);
+      
+      res.json({ success: true, data: plans[0] });
     } catch (error) {
-      console.error('Error fetching journey plan:', error);
-      res.status(500).json({ message: 'Failed to fetch journey plan' });
+      console.error('Get journey plan error:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch journey plan', error: error.message });
     }
   },
 
-  // Create a new journey plan
+  // Create new journey plan
   createJourneyPlan: async (req, res) => {
-    const { 
-      userId,
-      premisesId,
-      serviceTypeId,
-      pickupLocation,
-      dropoffLocation,
-      pickupDate,
-      priority,
-      status = 'pending'
-    } = req.body;
-
-    if (!userId || !premisesId || !serviceTypeId || !pickupLocation || !dropoffLocation || !pickupDate) {
-      return res.status(400).json({ message: 'Missing required fields' });
-    }
-
     try {
-      // Check if staff exists
-      const [staff] = await db.query('SELECT id FROM staff WHERE id = ?', [userId]);
-      if (staff.length === 0) {
-        return res.status(404).json({ message: 'Staff not found' });
+      const {
+        date,
+        time,
+        userId,
+        clientId,
+        status = 0,
+        notes,
+        showUpdateLocation = true,
+        routeId,
+        latitude,
+        longitude
+      } = req.body;
+
+      if (!date || !time || !userId || !clientId) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Required fields missing: date, time, userId, clientId' 
+        });
       }
 
-      // Check if premises exists
-      const [premises] = await db.query('SELECT id FROM premises WHERE id = ?', [premisesId]);
-      if (premises.length === 0) {
-        return res.status(404).json({ message: 'Premises not found' });
-      }
+      // Combine date and time into datetime
+      const dateTime = `${date} ${time}:00`;
 
-      // Check if service type exists
-      const [serviceTypes] = await db.query('SELECT id FROM service_types WHERE id = ?', [serviceTypeId]);
-      if (serviceTypes.length === 0) {
-        return res.status(404).json({ message: 'Service type not found' });
-      }
+      const [result] = await db.query(`
+        INSERT INTO JourneyPlan (
+          date, time, userId, clientId, status, notes, 
+          showUpdateLocation, routeId, latitude, longitude, createdAt, updatedAt
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+      `, [dateTime, time, userId, clientId, status, notes, showUpdateLocation, routeId, latitude, longitude]);
 
-      // Create the journey plan
-      const [result] = await db.query(
-        `INSERT INTO journeyPlan (
-          userId,
-          premisesId,
-          service_type_id,
-          pickup_location,
-          dropoff_location,
-          pickup_date,
-          priority,
-          status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [userId, premisesId, serviceTypeId, pickupLocation, dropoffLocation, pickupDate, priority, status]
-      );
+      // Fetch the created journey plan
+      const [newPlan] = await db.query(`
+        SELECT jp.*, 
+               u.name as user_name,
+               c.name as client_name,
+               c.company_name as client_company_name
+        FROM JourneyPlan jp
+        LEFT JOIN users u ON jp.userId = u.id
+        LEFT JOIN Clients c ON jp.clientId = c.id
+        WHERE jp.id = ?
+      `, [result.insertId]);
 
-      // Fetch the created journey plan with related data
-      const [newJourneyPlan] = await db.query(
-        `SELECT 
-          jp.*,
-          s.name as staffName,
-          s.phone as staffPhone,
-          p.name as premisesName,
-          st.name as serviceTypeName
-        FROM journeyPlan jp
-        LEFT JOIN staff s ON jp.userId = s.id
-        LEFT JOIN premises p ON jp.premisesId = p.id
-        LEFT JOIN service_types st ON jp.service_type_id = st.id
-        WHERE jp.id = ?`,
-        [result.insertId]
-      );
-
-      res.status(201).json(newJourneyPlan[0]);
+      res.status(201).json({ 
+        success: true, 
+        message: 'Journey plan created successfully',
+        data: newPlan[0]
+      });
     } catch (error) {
-      console.error('Error creating journey plan:', error);
-      res.status(500).json({ message: 'Failed to create journey plan' });
+      console.error('Create journey plan error:', error);
+      res.status(500).json({ success: false, message: 'Failed to create journey plan', error: error.message });
     }
   },
 
-  // Update a journey plan
+  // Update journey plan
   updateJourneyPlan: async (req, res) => {
-    const { 
-      status,
-      priority,
-      pickupLocation,
-      dropoffLocation,
-      pickupDate
-    } = req.body;
-    const journeyPlanId = req.params.id;
-
     try {
-      // Check if journey plan exists
-      const [journeyPlans] = await db.query('SELECT id FROM journeyPlan WHERE id = ?', [journeyPlanId]);
-      if (journeyPlans.length === 0) {
-        return res.status(404).json({ message: 'Journey plan not found' });
-      }
+      const { id } = req.params;
+      const {
+        date,
+        time,
+        status,
+        notes,
+        checkInTime,
+        latitude,
+        longitude,
+        imageUrl,
+        checkoutLatitude,
+        checkoutLongitude,
+        checkoutTime,
+        showUpdateLocation,
+        routeId
+      } = req.body;
 
-      // Update the journey plan
+      // Build dynamic UPDATE query
       const updates = [];
       const values = [];
 
-      if (status) {
-        updates.push('status = ?');
-        values.push(status);
-      }
-      if (priority) {
-        updates.push('priority = ?');
-        values.push(priority);
-      }
-      if (pickupLocation) {
-        updates.push('pickup_location = ?');
-        values.push(pickupLocation);
-      }
-      if (dropoffLocation) {
-        updates.push('dropoff_location = ?');
-        values.push(dropoffLocation);
-      }
-      if (pickupDate) {
-        updates.push('pickup_date = ?');
-        values.push(pickupDate);
-      }
+      if (date !== undefined) { updates.push('date = ?'); values.push(date); }
+      if (time !== undefined) { updates.push('time = ?'); values.push(time); }
+      if (status !== undefined) { updates.push('status = ?'); values.push(status); }
+      if (notes !== undefined) { updates.push('notes = ?'); values.push(notes); }
+      if (checkInTime !== undefined) { updates.push('checkInTime = ?'); values.push(checkInTime); }
+      if (latitude !== undefined) { updates.push('latitude = ?'); values.push(latitude); }
+      if (longitude !== undefined) { updates.push('longitude = ?'); values.push(longitude); }
+      if (imageUrl !== undefined) { updates.push('imageUrl = ?'); values.push(imageUrl); }
+      if (checkoutLatitude !== undefined) { updates.push('checkoutLatitude = ?'); values.push(checkoutLatitude); }
+      if (checkoutLongitude !== undefined) { updates.push('checkoutLongitude = ?'); values.push(checkoutLongitude); }
+      if (checkoutTime !== undefined) { updates.push('checkoutTime = ?'); values.push(checkoutTime); }
+      if (showUpdateLocation !== undefined) { updates.push('showUpdateLocation = ?'); values.push(showUpdateLocation); }
+      if (routeId !== undefined) { updates.push('routeId = ?'); values.push(routeId); }
 
       if (updates.length === 0) {
-        return res.status(400).json({ message: 'No valid updates provided' });
+        return res.status(400).json({ success: false, message: 'No fields provided for update' });
       }
 
-      values.push(journeyPlanId);
+      updates.push('updatedAt = NOW()');
+      values.push(id);
+
       await db.query(
-        `UPDATE journeyPlan SET ${updates.join(', ')} WHERE id = ?`,
+        `UPDATE JourneyPlan SET ${updates.join(', ')} WHERE id = ?`,
         values
       );
 
-      // Fetch the updated journey plan with related data
-      const [updatedJourneyPlan] = await db.query(
-        `SELECT 
-          jp.*,
-          s.name as staffName,
-          s.phone as staffPhone,
-          p.name as premisesName,
-        FROM journeyPlan jp
-        LEFT JOIN staff s ON jp.userId = s.id
-        LEFT JOIN premises p ON jp.premisesId = p.id
-       
-        WHERE jp.id = ?`,
-        [journeyPlanId]
-      );
+      // Fetch the updated journey plan
+      const [updatedPlan] = await db.query(`
+        SELECT jp.*, 
+               u.name as user_name,
+               c.name as client_name,
+               c.company_name as client_company_name
+        FROM JourneyPlan jp
+        LEFT JOIN users u ON jp.userId = u.id
+        LEFT JOIN Clients c ON jp.clientId = c.id
+        WHERE jp.id = ?
+      `, [id]);
 
-      res.json(updatedJourneyPlan[0]);
+      res.json({ 
+        success: true, 
+        message: 'Journey plan updated successfully',
+        data: updatedPlan[0]
+      });
     } catch (error) {
-      console.error('Error updating journey plan:', error);
-      res.status(500).json({ message: 'Failed to update journey plan' });
+      console.error('Update journey plan error:', error);
+      res.status(500).json({ success: false, message: 'Failed to update journey plan', error: error.message });
     }
   },
 
-  // Delete a journey plan
+  // Delete journey plan
   deleteJourneyPlan: async (req, res) => {
     try {
-      const [result] = await db.query('DELETE FROM journeyPlan WHERE id = ?', [req.params.id]);
+      const { id } = req.params;
+      
+      const [result] = await db.query('DELETE FROM JourneyPlan WHERE id = ?', [id]);
       
       if (result.affectedRows === 0) {
-        return res.status(404).json({ message: 'Journey plan not found' });
+        return res.status(404).json({ success: false, message: 'Journey plan not found' });
       }
-
-      res.json({ message: 'Journey plan deleted successfully' });
+      
+      res.json({ success: true, message: 'Journey plan deleted successfully' });
     } catch (error) {
-      console.error('Error deleting journey plan:', error);
-      res.status(500).json({ message: 'Failed to delete journey plan' });
+      console.error('Delete journey plan error:', error);
+      res.status(500).json({ success: false, message: 'Failed to delete journey plan', error: error.message });
+    }
+  },
+
+  // Check in to a journey plan
+  checkIn: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { latitude, longitude, imageUrl, notes } = req.body;
+
+      const updateData = {
+        checkInTime: new Date().toISOString(),
+        status: 1, // In Progress
+        updatedAt: new Date().toISOString()
+      };
+
+      if (latitude !== undefined) updateData.latitude = latitude;
+      if (longitude !== undefined) updateData.longitude = longitude;
+      if (imageUrl !== undefined) updateData.imageUrl = imageUrl;
+      if (notes !== undefined) updateData.notes = notes;
+
+      const updates = Object.keys(updateData).map(key => `${key} = ?`).join(', ');
+      const values = [...Object.values(updateData), id];
+
+      await db.query(
+        `UPDATE JourneyPlan SET ${updates} WHERE id = ?`,
+        values
+      );
+
+      res.json({ success: true, message: 'Check-in successful' });
+    } catch (error) {
+      console.error('Check-in error:', error);
+      res.status(500).json({ success: false, message: 'Failed to check-in', error: error.message });
+    }
+  },
+
+  // Check out from a journey plan
+  checkOut: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { latitude, longitude, notes } = req.body;
+
+      const updateData = {
+        checkoutTime: new Date().toISOString(),
+        status: 2, // Completed
+        updatedAt: new Date().toISOString()
+      };
+
+      if (latitude !== undefined) updateData.checkoutLatitude = latitude;
+      if (longitude !== undefined) updateData.checkoutLongitude = longitude;
+      if (notes !== undefined) updateData.notes = notes;
+
+      const updates = Object.keys(updateData).map(key => `${key} = ?`).join(', ');
+      const values = [...Object.values(updateData), id];
+
+      await db.query(
+        `UPDATE JourneyPlan SET ${updates} WHERE id = ?`,
+        values
+      );
+
+      res.json({ success: true, message: 'Check-out successful' });
+    } catch (error) {
+      console.error('Check-out error:', error);
+      res.status(500).json({ success: false, message: 'Failed to check-out', error: error.message });
     }
   }
 };

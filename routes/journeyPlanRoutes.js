@@ -1,14 +1,29 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../database/db');
+const journeyPlanController = require('../controllers/journeyPlanController');
 
-router.get('/', async (req, res) => {
-  try {
-    const [rows] = await db.query('SELECT * FROM JourneyPlan');
-    res.json(rows);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch journey plans' });
-  }
-});
+// Get all journey plans
+router.get('/', journeyPlanController.getAllJourneyPlans);
+
+// Get journey plans by user ID
+router.get('/user/:userId', journeyPlanController.getJourneyPlansByUser);
+
+// Get journey plan by ID
+router.get('/:id', journeyPlanController.getJourneyPlan);
+
+// Create new journey plan
+router.post('/', journeyPlanController.createJourneyPlan);
+
+// Update journey plan
+router.put('/:id', journeyPlanController.updateJourneyPlan);
+
+// Delete journey plan
+router.delete('/:id', journeyPlanController.deleteJourneyPlan);
+
+// Check in to journey plan
+router.post('/:id/checkin', journeyPlanController.checkIn);
+
+// Check out from journey plan
+router.post('/:id/checkout', journeyPlanController.checkOut);
 
 module.exports = router; 

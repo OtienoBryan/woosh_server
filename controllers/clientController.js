@@ -146,28 +146,44 @@ const clientController = {
   createClient: async (req, res) => {
     try {
       const {
-        name, address, latitude, longitude, balance, email,
-        region_id, region, route_id, route_name, route_id_update, route_name_update,
-        contact, tax_pin, location, status, client_type, outlet_account,
-        countryId, added_by
+        name, address, email,
+        region_id, route_id,
+        contact, tax_pin, status,
+        countryId, country_id, credit_limit, payment_terms
       } = req.body;
-      if (!name || !region_id || !region || !contact || !countryId) {
+      
+      if (!name || !email) {
         return res.status(400).json({ message: 'Required fields missing' });
       }
-      const [result] = await db.query(
-        `INSERT INTO Clients
-          (name, address, latitude, longitude, balance, email, region_id, region, route_id, route_name, route_id_update, route_name_update, contact, tax_pin, location, status, client_type, outlet_account, countryId, added_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          name, address, latitude, longitude, balance, email,
-          region_id, region, route_id, route_name, route_id_update, route_name_update,
-          contact, tax_pin, location, status || 0, client_type, outlet_account,
-          countryId, added_by
-        ]
-      );
+      
+      // Handle both field name variations for compatibility
+      const finalCountryId = countryId || country_id;
+      
+      // Build dynamic INSERT query based on available fields
+      const fields = ['name', 'email'];
+      const values = [name, email];
+      
+      if (address) { fields.push('address'); values.push(address); }
+      if (region_id) { fields.push('region_id'); values.push(region_id); }
+      if (route_id) { fields.push('route_id_update'); values.push(route_id); }
+      if (contact) { fields.push('contact'); values.push(contact); }
+      if (tax_pin) { fields.push('tax_pin'); values.push(tax_pin); }
+      if (status !== undefined) { fields.push('status'); values.push(status || 0); }
+      if (finalCountryId) { fields.push('countryId'); values.push(finalCountryId); }
+      if (credit_limit) { fields.push('credit_limit'); values.push(credit_limit); }
+      if (payment_terms) { fields.push('payment_terms'); values.push(payment_terms); }
+      
+      const placeholders = fields.map(() => '?').join(', ');
+      const sql = `INSERT INTO Clients (${fields.join(', ')}) VALUES (${placeholders})`;
+      
+      console.log('Create client SQL:', sql);
+      console.log('Create client values:', values);
+      
+      const [result] = await db.query(sql, values);
       const [newClient] = await db.query('SELECT * FROM Clients WHERE id = ?', [result.insertId]);
       res.status(201).json(newClient[0]);
     } catch (error) {
+      console.error('Create client error:', error);
       res.status(500).json({ message: 'Failed to create client', error: error.message });
     }
   },
@@ -177,28 +193,46 @@ const clientController = {
     try {
       const { id } = req.params;
       const {
-        name, address, latitude, longitude, balance, email,
-        region_id, region, route_id, route_name, route_id_update, route_name_update,
-        contact, tax_pin, location, status, client_type, outlet_account,
-        countryId, added_by
+        name, address, email,
+        region_id, route_id,
+        contact, tax_pin, status,
+        countryId, country_id, credit_limit, payment_terms
       } = req.body;
-      await db.query(
-        `UPDATE Clients SET
-          name = ?, address = ?, latitude = ?, longitude = ?, balance = ?, email = ?,
-          region_id = ?, region = ?, route_id = ?, route_name = ?, route_id_update = ?, route_name_update = ?,
-          contact = ?, tax_pin = ?, location = ?, status = ?, client_type = ?, outlet_account = ?,
-          countryId = ?, added_by = ?
-         WHERE id = ?`,
-        [
-          name, address, latitude, longitude, balance, email,
-          region_id, region, route_id, route_name, route_id_update, route_name_update,
-          contact, tax_pin, location, status, client_type, outlet_account,
-          countryId, added_by, id
-        ]
-      );
+      
+      // Handle both field name variations for compatibility
+      const finalCountryId = countryId || country_id;
+      
+      // Build dynamic UPDATE query based on available fields
+      const updates = [];
+      const values = [];
+      
+      if (name !== undefined) { updates.push('name = ?'); values.push(name); }
+      if (email !== undefined) { updates.push('email = ?'); values.push(email); }
+      if (address !== undefined) { updates.push('address = ?'); values.push(address); }
+      if (region_id !== undefined) { updates.push('region_id = ?'); values.push(region_id); }
+      if (route_id !== undefined) { updates.push('route_id_update = ?'); values.push(route_id); }
+      if (contact !== undefined) { updates.push('contact = ?'); values.push(contact); }
+      if (tax_pin !== undefined) { updates.push('tax_pin = ?'); values.push(tax_pin); }
+      if (status !== undefined) { updates.push('status = ?'); values.push(status); }
+      if (finalCountryId !== undefined) { updates.push('countryId = ?'); values.push(finalCountryId); }
+      if (credit_limit !== undefined) { updates.push('credit_limit = ?'); values.push(credit_limit); }
+      if (payment_terms !== undefined) { updates.push('payment_terms = ?'); values.push(payment_terms); }
+      
+      if (updates.length === 0) {
+        return res.status(400).json({ message: 'No fields to update' });
+      }
+      
+      values.push(id); // Add the WHERE clause parameter
+      const sql = `UPDATE Clients SET ${updates.join(', ')} WHERE id = ?`;
+      
+      console.log('Update client SQL:', sql);
+      console.log('Update client values:', values);
+      
+      await db.query(sql, values);
       const [updatedClient] = await db.query('SELECT * FROM Clients WHERE id = ?', [id]);
       res.json(updatedClient[0]);
     } catch (error) {
+      console.error('Update client error:', error);
       res.status(500).json({ message: 'Failed to update client', error: error.message });
     }
   },

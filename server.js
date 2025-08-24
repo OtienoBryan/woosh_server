@@ -39,6 +39,7 @@ try {
   userRoutes = require('./routes/userRoutes');
   loginHistoryRoutes = require('./routes/loginHistoryRoutes');
   journeyPlanRoutes = require('./routes/journeyPlanRoutes');
+  salesRepRoutes = require('./routes/salesRepRoutes');
   riderRoutes = require('./routes/riderRoutes');
   myVisibilityReportRoutes = require('./routes/myVisibilityReportRoutes');
   feedbackReportRoutes = require('./routes/feedbackReportRoutes');
@@ -457,11 +458,9 @@ app.delete('/api/clients/:clientId/service-charges/:chargeId', serviceChargeCont
 
 // Journey Plan routes
 app.use('/api/journey-plans', journeyPlanRoutes);
-app.get('/api/journey-plans', journeyPlanController.getJourneyPlans);
-app.get('/api/journey-plans/:id', journeyPlanController.getJourneyPlan);
-app.post('/api/journey-plans', journeyPlanController.createJourneyPlan);
-app.patch('/api/journey-plans/:id', journeyPlanController.updateJourneyPlan);
-app.delete('/api/journey-plans/:id', journeyPlanController.deleteJourneyPlan);
+
+// Sales Representative routes
+app.use('/api/sales-reps', salesRepRoutes);
 
 
 

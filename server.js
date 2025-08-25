@@ -40,6 +40,7 @@ try {
   loginHistoryRoutes = require('./routes/loginHistoryRoutes');
   journeyPlanRoutes = require('./routes/journeyPlanRoutes');
   salesRepRoutes = require('./routes/salesRepRoutes');
+  visibilityReportRoutes = require('./routes/visibilityReportRoutes');
   riderRoutes = require('./routes/riderRoutes');
   myVisibilityReportRoutes = require('./routes/myVisibilityReportRoutes');
   feedbackReportRoutes = require('./routes/feedbackReportRoutes');
@@ -461,6 +462,9 @@ app.use('/api/journey-plans', journeyPlanRoutes);
 
 // Sales Representative routes
 app.use('/api/sales-reps', salesRepRoutes);
+
+// Visibility Report routes
+app.use('/api/visibility-reports', visibilityReportRoutes);
 
 
 

@@ -53,6 +53,7 @@ try {
   storeRoutes = require('./routes/storeRoutes');
   assetAssignmentRoutes = require('./routes/assetAssignmentRoutes');
   merchandiseRoutes = require('./routes/merchandiseRoutes');
+  clientAssignmentRoutes = require('./routes/clientAssignmentRoutes');
 } catch (error) {
   console.log('Some modules failed to load:', error.message);
 }
@@ -462,6 +463,9 @@ app.use('/api/journey-plans', journeyPlanRoutes);
 
 // Sales Representative routes
 app.use('/api/sales-reps', salesRepRoutes);
+
+// Client Assignment routes
+app.use('/api/client-assignments', clientAssignmentRoutes);
 
 // Visibility Report routes
 app.use('/api/visibility-reports', visibilityReportRoutes);

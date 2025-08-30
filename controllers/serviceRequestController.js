@@ -8,7 +8,7 @@ const serviceRequestController = {
 
       // First, verify the client exists
       const [client] = await db.query(
-        'SELECT id FROM clients WHERE id = ?',
+        'SELECT id FROM Clients WHERE id = ?',
         [clientId]
       );
 
@@ -58,7 +58,7 @@ const serviceRequestController = {
 
       // Check if client exists
       const [client] = await db.query(
-        'SELECT id FROM clients WHERE id = ?',
+        'SELECT id FROM Clients WHERE id = ?',
         [clientId]
       );
 

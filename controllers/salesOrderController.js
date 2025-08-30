@@ -4,15 +4,23 @@ const salesOrderController = {
   // Get all sales orders
   getAllSalesOrders: async (req, res) => {
     try {
-      console.log('Fetching all sales orders with my_status = 1...');
+      console.log('Fetching all sales orders with my_status IN (1, 2, 3)...');
       
       // First, let's check how many sales orders exist in total
       const [totalOrders] = await db.query('SELECT COUNT(*) as total FROM sales_orders');
       console.log('Total sales orders in database:', totalOrders[0].total);
       
-      // Check how many have my_status = 1
-      const [confirmedOrders] = await db.query('SELECT COUNT(*) as confirmed FROM sales_orders WHERE my_status = 1');
-      console.log('Sales orders with my_status = 1:', confirmedOrders[0].confirmed);
+      // Check how many have my_status IN (1, 2, 3)
+      const [approvedOrders] = await db.query('SELECT COUNT(*) as approved FROM sales_orders WHERE my_status IN (1, 2, 3)');
+      console.log('Sales orders with my_status IN (1, 2, 3):', approvedOrders[0].approved);
+      
+      // Check breakdown by status
+      const [status1Count] = await db.query('SELECT COUNT(*) as count FROM sales_orders WHERE my_status = 1');
+      const [status2Count] = await db.query('SELECT COUNT(*) as count FROM sales_orders WHERE my_status = 2');
+      const [status3Count] = await db.query('SELECT COUNT(*) as count FROM sales_orders WHERE my_status = 3');
+      console.log('Status 1 (Approved):', status1Count[0].count);
+      console.log('Status 2 (Assigned):', status2Count[0].count);
+      console.log('Status 3 (In Transit):', status3Count[0].count);
       
       const [rows] = await db.query(`
         SELECT 
@@ -25,13 +33,14 @@ const salesOrderController = {
         LEFT JOIN Clients c ON so.client_id = c.id
         LEFT JOIN users u ON so.created_by = u.id
         LEFT JOIN SalesRep sr ON so.salesrep = sr.id
-        WHERE so.my_status = 1
+        WHERE so.my_status IN (1, 2, 3)
         ORDER BY so.created_at DESC
       `);
       
       console.log('Query result rows:', rows.length);
       if (rows.length > 0) {
         console.log('Sample order:', rows[0]);
+        console.log('Sample order my_status:', rows[0].my_status);
       }
       
       // Get items for each sales order
@@ -68,6 +77,12 @@ const salesOrderController = {
       }
       
       console.log('Final response data length:', rows.length);
+      console.log('Orders by status:');
+      const statusCounts = rows.reduce((acc, order) => {
+        acc[order.my_status] = (acc[order.my_status] || 0) + 1;
+        return acc;
+      }, {});
+      console.log(statusCounts);
       res.json({ success: true, data: rows });
     } catch (error) {
       console.error('Error fetching sales orders:', error);

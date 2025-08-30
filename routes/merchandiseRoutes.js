@@ -100,6 +100,25 @@ const validateBulkStock = [
     .withMessage('General notes must be less than 500 characters')
 ];
 
+const validateAssignment = [
+  body('merchandise_id')
+    .isInt({ min: 1 })
+    .withMessage('Merchandise ID must be a positive integer'),
+  body('staff_id')
+    .isInt({ min: 1 })
+    .withMessage('Staff ID must be a positive integer'),
+  body('quantity_assigned')
+    .isInt({ min: 1 })
+    .withMessage('Quantity must be a positive integer'),
+  body('date_assigned')
+    .isISO8601()
+    .withMessage('Date must be a valid date'),
+  body('comment')
+    .optional()
+    .trim()
+    .isLength({ max: 500 })
+    .withMessage('Comment must be less than 500 characters')
+];
 
 
 // Category routes
@@ -122,6 +141,12 @@ router.post('/stock/bulk', validateBulkStock, merchandiseController.addBulkStock
 router.get('/stock', merchandiseController.getStockHistory);
 router.get('/stock/current', merchandiseController.getCurrentStock);
 router.get('/ledger', merchandiseController.getLedger);
+
+// Assignment routes
+router.get('/assignments', merchandiseController.getAssignments);
+router.post('/assignments', validateAssignment, merchandiseController.createAssignment);
+router.put('/assignments/:id', validateAssignment, merchandiseController.updateAssignment);
+router.delete('/assignments/:id', merchandiseController.deleteAssignment);
 
 
 module.exports = router;

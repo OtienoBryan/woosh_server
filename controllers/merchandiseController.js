@@ -754,7 +754,177 @@ const getLedger = async (req, res) => {
   }
 };
 
+// Get merchandise assignments
+const getAssignments = async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      `SELECT ma.*, m.name as merchandise_name, s.name as staff_name, s.empl_no
+       FROM merchandise_assignments ma 
+       LEFT JOIN merchandise m ON ma.merchandise_id = m.id 
+       LEFT JOIN staff s ON ma.staff_id = s.id 
+       WHERE ma.is_active = TRUE 
+       ORDER BY ma.date_assigned DESC`
+    );
+    
+    res.json({
+      success: true,
+      data: rows
+    });
+  } catch (error) {
+    console.error('Error fetching merchandise assignments:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch merchandise assignments'
+    });
+  }
+};
 
+// Create merchandise assignment
+const createAssignment = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation failed',
+        details: errors.array()
+      });
+    }
+
+    const { merchandise_id, staff_id, quantity_assigned, date_assigned, comment } = req.body;
+    
+    // Check if merchandise exists
+    const [merchandise] = await db.execute(
+      'SELECT id FROM merchandise WHERE id = ? AND is_active = TRUE',
+      [merchandise_id]
+    );
+    
+    if (merchandise.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Merchandise not found'
+      });
+    }
+    
+    // Check if staff exists
+    const [staff] = await db.execute(
+      'SELECT id FROM staff WHERE id = ? AND status = 1',
+      [staff_id]
+    );
+    
+    if (staff.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Staff member not found or inactive'
+      });
+    }
+    
+    // Create assignment
+    const [result] = await db.execute(
+      'INSERT INTO merchandise_assignments (merchandise_id, staff_id, quantity_assigned, date_assigned, comment) VALUES (?, ?, ?, ?, ?)',
+      [merchandise_id, staff_id, quantity_assigned, date_assigned, comment]
+    );
+    
+    // Get the created assignment with details
+    const [newAssignment] = await db.execute(
+      `SELECT ma.*, m.name as merchandise_name, s.name as staff_name, s.empl_no
+       FROM merchandise_assignments ma 
+       LEFT JOIN merchandise m ON ma.merchandise_id = m.id 
+       LEFT JOIN staff s ON ma.staff_id = s.id 
+       WHERE ma.id = ?`,
+      [result.insertId]
+    );
+    
+    res.status(201).json({
+      success: true,
+      data: newAssignment[0]
+    });
+  } catch (error) {
+    console.error('Error creating merchandise assignment:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create merchandise assignment'
+    });
+  }
+};
+
+// Update merchandise assignment
+const updateAssignment = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation failed',
+        details: errors.array()
+      });
+    }
+
+    const { id } = req.params;
+    const { merchandise_id, staff_id, quantity_assigned, date_assigned, comment } = req.body;
+    
+    // Check if assignment exists
+    const [existing] = await db.execute(
+      'SELECT id FROM merchandise_assignments WHERE id = ? AND is_active = TRUE',
+      [id]
+    );
+    
+    if (existing.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Assignment not found'
+      });
+    }
+    
+    // Update assignment
+    await db.execute(
+      'UPDATE merchandise_assignments SET merchandise_id = ?, staff_id = ?, quantity_assigned = ?, date_assigned = ?, comment = ? WHERE id = ?',
+      [merchandise_id, staff_id, quantity_assigned, date_assigned, comment, id]
+    );
+    
+    res.json({
+      success: true,
+      message: 'Assignment updated successfully'
+    });
+  } catch (error) {
+    console.error('Error updating merchandise assignment:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update merchandise assignment'
+    });
+  }
+};
+
+// Delete merchandise assignment
+const deleteAssignment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Soft delete by setting is_active to false
+    const [result] = await db.execute(
+      'UPDATE merchandise_assignments SET is_active = FALSE WHERE id = ?',
+      [id]
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Assignment not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Assignment deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting merchandise assignment:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete merchandise assignment'
+    });
+  }
+};
 
 module.exports = {
   // Category operations
@@ -776,5 +946,11 @@ module.exports = {
   addBulkStock,
   getStockHistory,
   getCurrentStock,
-  getLedger
+  getLedger,
+
+  // Assignment operations
+  getAssignments,
+  createAssignment,
+  updateAssignment,
+  deleteAssignment
 };

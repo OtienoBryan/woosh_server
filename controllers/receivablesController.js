@@ -14,8 +14,8 @@ const receivablesController = {
           SUM(CASE WHEN DATEDIFF(NOW(), l.date) BETWEEN 61 AND 90 THEN l.debit - l.credit ELSE 0 END) AS days_61_90,
           SUM(CASE WHEN DATEDIFF(NOW(), l.date) > 90 THEN l.debit - l.credit ELSE 0 END) AS days_90_plus,
           SUM(l.debit - l.credit) AS total_receivable
-        FROM Clients c
-        LEFT JOIN client_ledger l ON c.id = l.client_id
+                 FROM Clients c
+         LEFT JOIN client_ledger l ON c.id = l.client_id
         GROUP BY c.id, c.name
         HAVING total_receivable > 0
         ORDER BY c.name
@@ -37,16 +37,8 @@ const receivablesController = {
       // Get invoice number if invoice_id is provided
       let invoiceNumber = null;
       if (invoice_id) {
-        const [invoiceResult] = await connection.query(
-          'SELECT so_number FROM sales_orders WHERE id = ?',
-          [invoice_id]
-        );
-        if (invoiceResult.length > 0) {
-          // Extract numeric part from so_number (e.g., "INV-123-456" -> 123)
-          const soNumber = invoiceResult[0].so_number;
-          const numericMatch = soNumber.match(/\d+/);
-          invoiceNumber = numericMatch ? parseInt(numericMatch[0]) : null;
-        }
+        // Store the invoice_id directly in the invoice_number field
+        invoiceNumber = invoice_id;
       }
 
       // Insert receipt record
@@ -91,6 +83,12 @@ const receivablesController = {
     } catch (error) {
       await connection.rollback();
       console.error('Error making customer payment:', error);
+      console.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        sqlMessage: error.sqlMessage,
+        sqlState: error.sqlState
+      });
       res.status(500).json({ success: false, error: 'Failed to record payment' });
     } finally {
       connection.release();
@@ -296,7 +294,7 @@ const receivablesController = {
   listReceipts: async (req, res) => {
     try {
       const { status } = req.query;
-      let query = `SELECT r.*, c.name FROM receipts r LEFT JOIN Clients c ON r.client_id = c.id`;
+             let query = `SELECT r.*, c.name FROM receipts r LEFT JOIN Clients c ON r.client_id = c.id`;
       const params = [];
       if (status) {
         query += ' WHERE r.status = ?';
@@ -369,6 +367,48 @@ const receivablesController = {
     } catch (error) {
       console.error('Error fetching client outstanding balance:', error);
       res.status(500).json({ success: false, error: 'Failed to fetch client outstanding balance' });
+    }
+  },
+
+  // Get receipts by invoice number to calculate amount paid
+  getReceiptsByInvoice: async (req, res) => {
+    try {
+      const { invoice_id } = req.params;
+      
+      console.log('Looking for receipts with invoice_number:', invoice_id);
+      
+      // Get all receipts for this invoice number directly from the receipts table
+      const [receipts] = await db.query(
+        `SELECT r.*, c.name as client_name 
+         FROM receipts r 
+         LEFT JOIN Clients c ON r.client_id = c.id
+         WHERE r.invoice_number = ?
+         ORDER BY r.receipt_date DESC`,
+        [invoice_id]
+      );
+      
+      console.log('Found receipts:', receipts);
+      
+      // Calculate total amount paid
+      const totalAmountPaid = receipts.reduce((sum, receipt) => {
+        // Only count confirmed receipts towards amount paid
+        if (receipt.status === 'confirmed') {
+          return sum + parseFloat(receipt.amount || 0);
+        }
+        return sum;
+      }, 0);
+      
+      res.json({ 
+        success: true, 
+        data: { 
+          receipts: receipts,
+          total_amount_paid: totalAmountPaid,
+          invoice_id: parseInt(invoice_id)
+        } 
+      });
+    } catch (error) {
+      console.error('Error fetching receipts by invoice:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch receipts by invoice' });
     }
   }
 };

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
+const db = require('../database/db');
 
 // Simple JWT auth middleware
 function authenticateToken(req, res, next) {
@@ -119,7 +120,6 @@ router.post('/purchase-orders/:purchaseOrderId/receive', purchaseOrderController
 // Sales Orders Routes
 router.get('/sales-orders', salesOrderController.getAllSalesOrders);
 router.get('/sales-orders-all', salesOrderController.getAllSalesOrdersIncludingDrafts);
-router.get('/sales-orders/:id', salesOrderController.getSalesOrderById);
 router.post('/sales-orders', (req, res, next) => {
   console.log('=== SALES ORDERS ROUTE HIT ===');
   console.log('Method:', req.method);
@@ -128,15 +128,85 @@ router.post('/sales-orders', (req, res, next) => {
   console.log('Headers:', JSON.stringify(req.headers, null, 2));
   next();
 }, salesOrderController.createSalesOrder);
+
+// Specific sales order routes (must come before general :id routes)
+router.get('/sales-orders/:id/items', salesOrderController.getSalesOrderItems);
+router.post('/sales-orders/:id/receive-back', salesOrderController.receiveBackToStock);
+router.post('/sales-orders/:id/convert-to-invoice', salesOrderController.convertToInvoice);
+router.post('/sales-orders/:id/complete-delivery', async (req, res) => {
+  console.log('Complete delivery route hit:', req.params, req.body);
+  
+  try {
+    const { id } = req.params;
+    const { recipient_name, recipient_phone, notes } = req.body;
+    
+    console.log('Processing delivery completion for order:', id);
+    
+    if (!recipient_name || !recipient_phone) {
+      console.log('Missing required fields:', { recipient_name, recipient_phone });
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Update sales order status to delivered
+    const updateResult = await db.query(`
+      UPDATE sales_orders 
+      SET my_status = 3, 
+          status = 'delivered',
+          delivery_notes = ?,
+          updated_at = NOW()
+      WHERE id = ?
+    `, [`Delivered to: ${recipient_name} (${recipient_phone}). ${notes || ''}`, id]);
+
+    console.log('Update result:', updateResult);
+
+    res.json({ 
+      success: true, 
+      message: 'Delivery completed successfully',
+      order_id: id
+    });
+  } catch (error) {
+    console.error('Error completing delivery:', error);
+    res.status(500).json({ error: 'Failed to complete delivery' });
+  }
+});
+
+// General sales order routes (must come after specific routes)
+router.get('/sales-orders/:id', salesOrderController.getSalesOrderById);
 router.put('/sales-orders/:id', salesOrderController.updateSalesOrder);
 router.delete('/sales-orders/:id', salesOrderController.deleteSalesOrder);
-router.get('/sales-orders/:id/items', salesOrderController.getSalesOrderItems);
-// Add PATCH route for assigning rider
 router.patch('/sales-orders/:id', salesOrderController.assignRider);
-// Add POST route for receiving items back to stock
-router.post('/sales-orders/:id/receive-back', salesOrderController.receiveBackToStock);
-// Add POST route for converting order to invoice
-router.post('/sales-orders/:id/convert-to-invoice', salesOrderController.convertToInvoice);
+
+// Add POST route for uploading delivery images
+router.post('/upload-delivery-image', uploadProductImageMulter.single('delivery_image'), (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image file provided' });
+    }
+
+    const { order_id, recipient_name, recipient_phone, notes } = req.body;
+    
+    if (!order_id || !recipient_name || !recipient_phone) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Here you would typically save the image path to the database
+    // For now, we'll just return success
+    res.json({ 
+      success: true, 
+      message: 'Delivery image uploaded successfully',
+      filename: req.file.filename,
+      order_id,
+      recipient_name,
+      recipient_phone,
+      notes
+    });
+  } catch (error) {
+    console.error('Error uploading delivery image:', error);
+    res.status(500).json({ error: 'Failed to upload delivery image' });
+  }
+});
+
+
 
 // Stores Routes
 router.get('/stores', storeController.getAllStores);
@@ -166,6 +236,7 @@ router.post('/receivables/payment', receivablesController.makeCustomerPayment);
 router.post('/receivables/confirm-payment', receivablesController.confirmCustomerPayment);
 router.get('/receipts', receivablesController.listReceipts);
 router.get('/receipts/invoice/:invoice_id/pending', receivablesController.getPendingReceiptsForInvoice);
+router.get('/receipts/invoice/:invoice_id', receivablesController.getReceiptsByInvoice);
 router.get('/clients/:clientId/outstanding-balance', receivablesController.getClientOutstandingBalance);
 
 // Reports Routes

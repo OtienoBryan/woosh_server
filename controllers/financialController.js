@@ -422,6 +422,33 @@ const productsController = {
     }
   },
 
+  // Update product cost price only
+  updateProductCostPrice: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { cost_price } = req.body;
+      
+      if (cost_price === undefined || cost_price === null) {
+        return res.status(400).json({ success: false, error: 'Cost price is required' });
+      }
+      
+      const [result] = await db.query(`
+        UPDATE products 
+        SET cost_price = ?
+        WHERE id = ?
+      `, [cost_price, id]);
+      
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ success: false, error: 'Product not found' });
+      }
+      
+      res.json({ success: true, message: 'Product cost price updated successfully' });
+    } catch (error) {
+      console.error('Error updating product cost price:', error);
+      res.status(500).json({ success: false, error: 'Failed to update product cost price' });
+    }
+  },
+
   // Delete product (soft delete)
   deleteProduct: async (req, res) => {
     try {

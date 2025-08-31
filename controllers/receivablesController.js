@@ -294,7 +294,7 @@ const receivablesController = {
   listReceipts: async (req, res) => {
     try {
       const { status } = req.query;
-             let query = `SELECT r.*, c.name FROM receipts r LEFT JOIN Clients c ON r.client_id = c.id`;
+             let query = `SELECT r.*, c.name as client_name, coa.account_name FROM receipts r LEFT JOIN Clients c ON r.client_id = c.id LEFT JOIN chart_of_accounts coa ON r.account_id = coa.id`;
       const params = [];
       if (status) {
         query += ' WHERE r.status = ?';

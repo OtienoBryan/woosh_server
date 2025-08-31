@@ -4,23 +4,28 @@ const salesOrderController = {
   // Get all sales orders
   getAllSalesOrders: async (req, res) => {
     try {
-      console.log('Fetching all sales orders with my_status IN (1, 2, 3)...');
+      console.log('Fetching sales orders with filters:', req.query);
       
-      // First, let's check how many sales orders exist in total
-      const [totalOrders] = await db.query('SELECT COUNT(*) as total FROM sales_orders');
-      console.log('Total sales orders in database:', totalOrders[0].total);
+      const { client_id, status } = req.query;
+      let whereClause = 'WHERE so.my_status IN (1, 2, 3)';
+      let queryParams = [];
       
-      // Check how many have my_status IN (1, 2, 3)
-      const [approvedOrders] = await db.query('SELECT COUNT(*) as approved FROM sales_orders WHERE my_status IN (1, 2, 3)');
-      console.log('Sales orders with my_status IN (1, 2, 3):', approvedOrders[0].approved);
+      // Add client_id filter if provided
+      if (client_id) {
+        whereClause += ' AND so.client_id = ?';
+        queryParams.push(client_id);
+      }
       
-      // Check breakdown by status
-      const [status1Count] = await db.query('SELECT COUNT(*) as count FROM sales_orders WHERE my_status = 1');
-      const [status2Count] = await db.query('SELECT COUNT(*) as count FROM sales_orders WHERE my_status = 2');
-      const [status3Count] = await db.query('SELECT COUNT(*) as count FROM sales_orders WHERE my_status = 3');
-      console.log('Status 1 (Approved):', status1Count[0].count);
-      console.log('Status 2 (Assigned):', status2Count[0].count);
-      console.log('Status 3 (In Transit):', status3Count[0].count);
+      // Add status filter if provided (comma-separated values)
+      if (status) {
+        const statusArray = status.split(',').map(s => s.trim());
+        const placeholders = statusArray.map(() => '?').join(',');
+        whereClause = whereClause.replace('so.my_status IN (1, 2, 3)', `so.my_status IN (${placeholders})`);
+        queryParams = [...statusArray, ...queryParams];
+      }
+      
+      console.log('Final WHERE clause:', whereClause);
+      console.log('Query parameters:', queryParams);
       
       const [rows] = await db.query(`
         SELECT 
@@ -33,9 +38,9 @@ const salesOrderController = {
         LEFT JOIN Clients c ON so.client_id = c.id
         LEFT JOIN users u ON so.created_by = u.id
         LEFT JOIN SalesRep sr ON so.salesrep = sr.id
-        WHERE so.my_status IN (1, 2, 3)
+        ${whereClause}
         ORDER BY so.created_at DESC
-      `);
+      `, queryParams);
       
       console.log('Query result rows:', rows.length);
       if (rows.length > 0) {

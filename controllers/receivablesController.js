@@ -309,6 +309,131 @@ const receivablesController = {
     }
   },
 
+  // Confirm a payment
+  confirmPayment: async (req, res) => {
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      
+      const { id } = req.params;
+      const { status, reference, receipt_date } = req.body;
+
+      if (status !== 'confirmed') {
+        return res.status(400).json({ success: false, error: 'Invalid status. Must be "confirmed"' });
+      }
+
+      // Get receipt details first with client information
+      const [receiptRows] = await connection.query(
+        `SELECT r.*, c.name as client_name FROM receipts r 
+         LEFT JOIN Clients c ON r.client_id = c.id 
+         WHERE r.id = ?`,
+        [id]
+      );
+
+      if (receiptRows.length === 0) {
+        return res.status(404).json({ success: false, error: 'Receipt not found' });
+      }
+
+      const receipt = receiptRows[0];
+
+      // Update receipt with status, reference, and receipt_date
+      await connection.query(
+        'UPDATE receipts SET status = ?, reference = ?, receipt_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [status, reference || null, receipt_date || null, id]
+      );
+
+      // Update client ledger - add credit entry for the payment
+      await connection.query(
+        `INSERT INTO client_ledger (client_id, date, description, credit, debit, reference, reference_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        [
+          receipt.client_id,
+          receipt_date || receipt.receipt_date,
+          `Payment received - ${receipt.payment_method}`,
+          receipt.amount, // Credit (reduces receivable)
+          0, // Debit
+          reference || receipt.reference || '',
+          receipt.id
+        ]
+      );
+
+      // Update client balance
+      await connection.query(
+        'UPDATE Clients SET balance = balance - ? WHERE id = ?',
+        [receipt.amount, receipt.client_id]
+      );
+
+      // Create journal entry for the payment
+      if (receipt.account_id) {
+        // Debit the bank/cash account (asset increases)
+        const [journalResult] = await connection.query(
+          `INSERT INTO journal_entries (entry_number, created_at, description, reference, created_by, total_debit, total_credit)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            `JE-RCP-${receipt.id}-${Date.now()}`, // Generate unique entry number
+            receipt_date || receipt.receipt_date,
+            `Payment received from ${receipt.client_name || `Client ${receipt.client_id}`} - ${receipt.payment_method}`,
+            reference || receipt.reference || '',
+            1, // Assuming user ID 1 for system operations
+            receipt.amount, // Total debit amount
+            receipt.amount  // Total credit amount
+          ]
+        );
+
+        const journalEntryId = journalResult.insertId;
+
+        // Debit the bank/cash account
+        await connection.query(
+          `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+           VALUES (?, ?, ?, ?, ?)`,
+          [journalEntryId, receipt.account_id, receipt.amount, 0, `PAYMENT FROM ${receipt.client_name || `Client ${receipt.client_id}`}`]
+        );
+
+        // Credit the accounts receivable account (asset decreases)
+        await connection.query(
+          `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+           VALUES (?, ?, ?, ?, ?)`,
+          [journalEntryId, 1, 0, receipt.amount, `PAYMENT FROM ${receipt.client_name || `Client ${receipt.client_id}`}`] // Assuming account ID 1 is Accounts Receivable
+        );
+      }
+
+      await connection.commit();
+      res.json({ success: true, message: 'Payment confirmed successfully' });
+    } catch (error) {
+      await connection.rollback();
+      console.error('Error confirming payment:', error);
+      res.status(500).json({ success: false, error: 'Internal server error' });
+    } finally {
+      connection.release();
+    }
+  },
+
+  // Decline a payment
+  declinePayment: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+
+      if (status !== 'cancelled') {
+        return res.status(400).json({ success: false, error: 'Invalid status. Must be "cancelled"' });
+      }
+
+      const [result] = await db.query(
+        'UPDATE receipts SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [status, id]
+      );
+
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ success: false, error: 'Receipt not found' });
+      }
+
+      res.json({ success: true, message: 'Payment declined successfully' });
+    } catch (error) {
+      console.error('Error declining payment:', error);
+      res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+  },
+
   // Get pending receipts for a specific invoice
   getPendingReceiptsForInvoice: async (req, res) => {
     try {

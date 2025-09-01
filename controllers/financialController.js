@@ -1950,11 +1950,13 @@ const getExpenseSummary = async (req, res) => {
         je.entry_date,
         je.reference,
         je.description,
-        COUNT(ei.id) as total_items
+        COUNT(ei.id) as total_items,
+        COALESCE(SUM(ep.amount), 0) as amount_paid
       FROM expense_details ed
       JOIN journal_entries je ON ed.journal_entry_id = je.id
       LEFT JOIN suppliers s ON ed.supplier_id = s.id
       LEFT JOIN expense_items ei ON ed.journal_entry_id = ei.journal_entry_id
+      LEFT JOIN expense_payments ep ON ed.id = ep.expense_detail_id AND ep.status = 'confirmed'
     `;
     
     const whereConditions = [];

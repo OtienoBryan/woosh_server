@@ -41,6 +41,38 @@ const chartOfAccountsController = {
     }
   },
 
+  // Get all expense types (accounts with account_type = 5)
+  getExpenseTypes: async (req, res) => {
+    try {
+      const [rows] = await db.query(`
+        SELECT id, account_code, account_name, description 
+        FROM chart_of_accounts 
+        WHERE account_type = 5 AND is_active = 1 
+        ORDER BY account_code
+      `);
+      res.json({ success: true, data: rows });
+    } catch (error) {
+      console.error('Error fetching expense types:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch expense types' });
+    }
+  },
+
+  // Get all accounts with account_type = 16
+  getAccountsByType16: async (req, res) => {
+    try {
+      const [rows] = await db.query(`
+        SELECT id, account_code, account_name, description, account_type, is_active
+        FROM chart_of_accounts 
+        WHERE account_type = 16 AND is_active = 1 
+        ORDER BY account_code
+      `);
+      res.json({ success: true, data: rows });
+    } catch (error) {
+      console.error('Error fetching accounts with type 16:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch accounts with type 16' });
+    }
+  },
+
   // Get account by ID
   getAccountById: async (req, res) => {
     try {
@@ -557,7 +589,18 @@ const postExpense = async (req, res) => {
   const connection = await db.getConnection();
   try {
     await connection.beginTransaction();
-    const { expense_account_id, payment_account_id, amount, date, description, reference, is_paid } = req.body;
+    const { 
+      expense_account_id, 
+      payment_account_id, 
+      amount, 
+      date, 
+      description, 
+      reference, 
+      is_paid, 
+      supplier_id, 
+      expense_items 
+    } = req.body;
+    
     if (!expense_account_id || !amount || !date) {
       return res.status(400).json({ success: false, error: 'Missing required fields' });
     }
@@ -589,12 +632,52 @@ const postExpense = async (req, res) => {
     );
     const journalEntryId = journalResult.insertId;
 
-    // Debit expense account
-    await connection.query(
-      `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
-       VALUES (?, ?, ?, 0, ?)`,
-      [journalEntryId, expense_account_id, amount, description || 'Expense']
-    );
+    // Store expense details with supplier information and total amount
+    if (supplier_id) {
+      await connection.query(
+        `INSERT INTO expense_details (journal_entry_id, supplier_id, amount, created_at)
+         VALUES (?, ?, ?, NOW())`,
+        [journalEntryId, supplier_id, amount]
+      );
+    }
+
+    // Store expense items if provided
+    if (expense_items && Array.isArray(expense_items) && expense_items.length > 0) {
+      for (const item of expense_items) {
+        await connection.query(
+          `INSERT INTO expense_items (journal_entry_id, description, quantity, unit_price, expense_account_id, tax_type, total_amount, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+          [journalEntryId, item.description, item.quantity, item.unit_price, item.expense_account_id, item.tax_type, item.amount]
+        );
+      }
+    }
+
+    // Group expense items by expense account and create separate journal entry lines
+    const expenseAccountGroups = {};
+    if (expense_items && Array.isArray(expense_items) && expense_items.length > 0) {
+      for (const item of expense_items) {
+        const accountId = item.expense_account_id;
+        if (!expenseAccountGroups[accountId]) {
+          expenseAccountGroups[accountId] = {
+            totalAmount: 0,
+            descriptions: []
+          };
+        }
+        expenseAccountGroups[accountId].totalAmount += item.amount;
+        expenseAccountGroups[accountId].descriptions.push(item.description);
+      }
+    }
+
+    // Create separate journal entry lines for each expense account
+    for (const [accountId, group] of Object.entries(expenseAccountGroups)) {
+      const accountDescription = group.descriptions.join('; ');
+      await connection.query(
+        `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+         VALUES (?, ?, ?, 0, ?)`,
+        [journalEntryId, parseInt(accountId), group.totalAmount, accountDescription || 'Expense']
+      );
+    }
+    
     // Credit payment or accrued account
     await connection.query(
       `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
@@ -649,27 +732,31 @@ const postExpense = async (req, res) => {
       );
     }
 
-    // Update account_ledger for expense account (debit, increases expense)
-    const [lastExpenseLedger] = await connection.query(
-      'SELECT running_balance FROM account_ledger WHERE account_id = ? ORDER BY date DESC, id DESC LIMIT 1',
-      [expense_account_id]
-    );
-    const prevExpenseBalance = lastExpenseLedger.length > 0 ? parseFloat(lastExpenseLedger[0].running_balance) : 0;
-    const newExpenseBalance = prevExpenseBalance + amount;
-    await connection.query(
-      `INSERT INTO account_ledger (account_id, date, description, reference_type, reference_id, debit, credit, running_balance, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed')`,
-      [
-        expense_account_id,
-        date,
-        description || 'Expense',
-        'expense',
-        journalEntryId,
-        amount,
-        0,
-        newExpenseBalance
-      ]
-    );
+    // Update account_ledger for each expense account (debit, increases expense)
+    for (const [accountId, group] of Object.entries(expenseAccountGroups)) {
+      const [lastExpenseLedger] = await connection.query(
+        'SELECT running_balance FROM account_ledger WHERE account_id = ? ORDER BY date DESC, id DESC LIMIT 1',
+        [parseInt(accountId)]
+      );
+      const prevExpenseBalance = lastExpenseLedger.length > 0 ? parseFloat(lastExpenseLedger[0].running_balance) : 0;
+      const newExpenseBalance = prevExpenseBalance + group.totalAmount;
+      const accountDescription = group.descriptions.join('; ');
+      
+      await connection.query(
+        `INSERT INTO account_ledger (account_id, date, description, reference_type, reference_id, debit, credit, running_balance, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed')`,
+        [
+          parseInt(accountId),
+          date,
+          accountDescription || 'Expense',
+          'expense',
+          journalEntryId,
+          group.totalAmount,
+          0,
+          newExpenseBalance
+        ]
+      );
+    }
 
     await connection.commit();
     res.json({ success: true, message: 'Expense posted successfully' });
@@ -1533,10 +1620,13 @@ const getAllExpenses = async (req, res) => {
   try {
     const { start_date, end_date } = req.query;
     let sql = `
-      SELECT jel.*, coa.account_name, coa.account_code, je.entry_date
+      SELECT jel.*, coa.account_name, coa.account_code, je.entry_date, 
+             ed.amount as expense_total_amount, s.company_name as supplier_name
       FROM journal_entry_lines jel
       JOIN chart_of_accounts coa ON jel.account_id = coa.id
       JOIN journal_entries je ON jel.journal_entry_id = je.id
+      LEFT JOIN expense_details ed ON je.id = ed.journal_entry_id
+      LEFT JOIN suppliers s ON ed.supplier_id = s.id
       WHERE coa.account_type = 16
     `;
     const params = [];
@@ -1554,6 +1644,106 @@ const getAllExpenses = async (req, res) => {
   } catch (error) {
     console.error('Error fetching expenses:', error);
     res.status(500).json({ success: false, error: 'Failed to fetch expenses' });
+  }
+};
+
+// Get expense summary from expense_details table
+const getExpenseSummary = async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+    let sql = `
+      SELECT 
+        ed.id,
+        ed.journal_entry_id,
+        ed.supplier_id,
+        ed.amount,
+        ed.created_at,
+        s.company_name as supplier_name,
+        je.entry_date,
+        je.reference,
+        je.description,
+        COUNT(ei.id) as total_items
+      FROM expense_details ed
+      JOIN journal_entries je ON ed.journal_entry_id = je.id
+      LEFT JOIN suppliers s ON ed.supplier_id = s.id
+      LEFT JOIN expense_items ei ON ed.journal_entry_id = ei.journal_entry_id
+    `;
+    
+    const whereConditions = [];
+    const params = [];
+    
+    if (start_date) {
+      whereConditions.push('je.entry_date >= ?');
+      params.push(start_date);
+    }
+    if (end_date) {
+      whereConditions.push('je.entry_date <= ?');
+      params.push(end_date);
+    }
+    
+    if (whereConditions.length > 0) {
+      sql += ' WHERE ' + whereConditions.join(' AND ');
+    }
+    
+    sql += ' GROUP BY ed.id, ed.journal_entry_id, ed.supplier_id, ed.amount, ed.created_at, s.company_name, je.entry_date, je.reference, je.description';
+    sql += ' ORDER BY je.entry_date DESC, ed.id DESC';
+    
+    const [rows] = await db.query(sql, params);
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    console.error('Error fetching expense summary:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch expense summary' });
+  }
+};
+
+// Get expense items for a specific journal entry
+const getExpenseItems = async (req, res) => {
+  try {
+    const { journal_entry_id } = req.params;
+    const [rows] = await db.query(`
+      SELECT id, description, quantity, unit_price, tax_type, total_amount, created_at
+      FROM expense_items 
+      WHERE journal_entry_id = ?
+      ORDER BY id
+    `, [journal_entry_id]);
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    console.error('Error fetching expense items:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch expense items' });
+  }
+};
+
+// Get journal entry by ID
+const getJournalEntryById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [journalEntry] = await db.query(
+      'SELECT * FROM journal_entries WHERE id = ?',
+      [id]
+    );
+
+    if (journalEntry.length === 0) {
+      return res.status(404).json({ success: false, error: 'Journal entry not found' });
+    }
+
+    const [journalEntryLines] = await db.query(
+      `SELECT jel.*, coa.account_name, coa.account_code
+       FROM journal_entry_lines jel
+       JOIN chart_of_accounts coa ON jel.account_id = coa.id
+       WHERE jel.journal_entry_id = ?
+       ORDER BY jel.id`,
+      [id]
+    );
+
+    const result = {
+      ...journalEntry[0],
+      journal_entry_lines: journalEntryLines
+    };
+
+    res.json({ success: true, data: result });
+  } catch (error) {
+    console.error('Error fetching journal entry:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch journal entry' });
   }
 };
 
@@ -1727,6 +1917,9 @@ module.exports = {
   getSalesReps,
   getAssetsTotalValue,
   getAllExpenses,
+  getExpenseSummary,
+  getExpenseItems,
+  getJournalEntryById,
   createJournalEntry,
   getProductsSaleReport,
 }; 

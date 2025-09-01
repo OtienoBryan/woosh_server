@@ -60,6 +60,9 @@ const {
   getAllAssetsWithDepreciation,
   getAssetsTotalValue,
   getAllExpenses,
+  getExpenseSummary,
+  getExpenseItems,
+  getJournalEntryById,
   createJournalEntry,
   getProductsSaleReport
 } = require('../controllers/financialController');
@@ -75,6 +78,8 @@ const creditNoteController = require('../controllers/creditNoteController');
 // Chart of Accounts Routes
 router.get('/accounts', chartOfAccountsController.getAllAccounts);
 router.get('/accounts/type/:account_type', chartOfAccountsController.getAccountsByType);
+router.get('/expense-types', chartOfAccountsController.getExpenseTypes);
+router.get('/accounts/type16', chartOfAccountsController.getAccountsByType16);
 router.get('/accounts/:id', chartOfAccountsController.getAccountById);
 router.post('/accounts', chartOfAccountsController.createAccount);
 router.put('/accounts/:id', chartOfAccountsController.updateAccount);
@@ -259,6 +264,11 @@ router.get('/cash-equivalents/accounts/:account_id/ledger', getCashAccountLedger
 // Expenses Route
 router.post('/expenses', postExpense);
 router.get('/expenses', getAllExpenses);
+router.get('/expense-summary', getExpenseSummary);
+router.get('/expenses/:journal_entry_id/items', getExpenseItems);
+
+// Journal Entries Route
+router.get('/journal-entries/:id', getJournalEntryById);
 
 // Asset management
 router.get('/asset-types', getAssetTypes);

@@ -117,6 +117,10 @@ const salesOrderController = {
           so.*, 
           c.name as customer_name, 
           c.balance as customer_balance,
+          c.client_type,
+          oc.name as client_type_name,
+          c.outlet_account,
+          oa.name as outlet_account_name,
           u.full_name as created_by_name,
           sr.name as salesrep,
           r.name as rider_name,
@@ -124,6 +128,8 @@ const salesOrderController = {
           receiver.name as received_by_name
         FROM sales_orders so
         LEFT JOIN Clients c ON so.client_id = c.id
+        LEFT JOIN outlet_categories oc ON c.client_type = oc.id
+        LEFT JOIN outlet_accounts oa ON c.outlet_account = oa.id
         LEFT JOIN users u ON so.created_by = u.id
         LEFT JOIN SalesRep sr ON so.salesrep = sr.id
         LEFT JOIN Riders r ON so.rider_id = r.id

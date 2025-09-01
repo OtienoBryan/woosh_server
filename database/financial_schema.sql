@@ -495,6 +495,32 @@ CREATE TABLE IF NOT EXISTS VisibilityReport (
   userId INT(11) NOT NULL
 ); 
 
+-- Expense Details Table (links expenses to suppliers)
+CREATE TABLE IF NOT EXISTS expense_details (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  journal_entry_id INT NOT NULL,
+  supplier_id INT,
+  amount DECIMAL(15,2) NOT NULL DEFAULT 0.00,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id) ON DELETE CASCADE,
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+);
+
+-- Expense Items Table (stores individual expense line items)
+CREATE TABLE IF NOT EXISTS expense_items (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  journal_entry_id INT NOT NULL,
+  description VARCHAR(255) NOT NULL,
+  quantity INT DEFAULT 1,
+  unit_price DECIMAL(10,2) NOT NULL,
+  expense_account_id INT NOT NULL,
+  tax_type ENUM('16%', 'zero_rated', 'exempted') DEFAULT '16%',
+  total_amount DECIMAL(15,2) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id) ON DELETE CASCADE,
+  FOREIGN KEY (expense_account_id) REFERENCES chart_of_accounts(id)
+);
+
 -- My Visibility Report Table
 CREATE TABLE IF NOT EXISTS MyVisibilityReport (
   id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,

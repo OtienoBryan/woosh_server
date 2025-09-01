@@ -388,4 +388,15 @@ const getAllClientTypes = async (req, res) => {
   }
 };
 
-module.exports = { ...clientController, getAllClientTypes }; 
+// Get all outlet accounts
+const getAllOutletAccounts = async (req, res) => {
+  try {
+    const [accounts] = await db.query('SELECT id, name FROM outlet_accounts ORDER BY name');
+    res.json(accounts);
+  } catch (error) {
+    console.error('Error fetching outlet accounts:', error);
+    res.status(500).json({ message: 'Failed to fetch outlet accounts', error: error.message });
+  }
+};
+
+module.exports = { ...clientController, getAllClientTypes, getAllOutletAccounts }; 

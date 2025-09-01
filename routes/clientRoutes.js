@@ -5,6 +5,7 @@ const clientController = require('../controllers/clientController');
 // Fetch all clients from the Clients table
 router.get('/', clientController.getAllClients);
 router.get('/types', clientController.getAllClientTypes);
+router.get('/outlet-accounts', clientController.getAllOutletAccounts);
 router.get('/activity', clientController.getClientActivity);
 router.get('/:id', clientController.getClient);
 router.put('/:id', clientController.updateClient);

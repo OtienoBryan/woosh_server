@@ -65,7 +65,10 @@ const {
   getJournalEntryById,
   getExpenseInvoice,
   createJournalEntry,
-  getProductsSaleReport
+  getProductsSaleReport,
+  createExpensePayment,
+  getPendingExpensePayments,
+  updateExpensePaymentStatus
 } = require('../controllers/financialController');
 const purchaseOrderController = require('../controllers/purchaseOrderController');
 const storeController = require('../controllers/storeController');
@@ -268,6 +271,9 @@ router.get('/expenses', getAllExpenses);
 router.get('/expense-summary', getExpenseSummary);
 router.get('/expenses/:journal_entry_id/items', getExpenseItems);
 router.get('/expenses/:journal_entry_id/invoice', getExpenseInvoice);
+router.post('/expenses/:journal_entry_id/payments', authenticateToken, createExpensePayment);
+router.get('/expense-payments/pending', getPendingExpensePayments);
+router.put('/expense-payments/:id/status', authenticateToken, updateExpensePaymentStatus);
 
 // Journal Entries Route
 router.get('/journal-entries/:id', getJournalEntryById);

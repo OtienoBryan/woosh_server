@@ -605,6 +605,9 @@ const postExpense = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Missing required fields' });
     }
 
+    // Use existing Purchase Tax Control Account (ID 16) for tax amounts
+    const vatAccountId = 16;
+
     // If not paid, use Accrued Expenses as the credit account
     let creditAccountId = payment_account_id;
     if (!is_paid) {
@@ -617,7 +620,31 @@ const postExpense = async (req, res) => {
       creditAccountId = accruedRows[0].id;
     }
 
-    // Create journal entry
+    // Calculate tax-exclusive amount and tax amount
+    let taxExclusiveAmount = 0;
+    let taxAmount = 0;
+    
+    if (expense_items && Array.isArray(expense_items) && expense_items.length > 0) {
+      for (const item of expense_items) {
+        if (item.tax_type === '16%') {
+          // Unit price is tax-exclusive, so calculate tax
+          const itemTaxExclusiveAmount = parseFloat(item.quantity) * parseFloat(item.unit_price);
+          const itemTaxAmount = itemTaxExclusiveAmount * 0.16;
+          taxExclusiveAmount += itemTaxExclusiveAmount;
+          taxAmount += itemTaxAmount;
+        } else {
+          // Zero-rated or exempted - no tax
+          const itemAmount = parseFloat(item.quantity) * parseFloat(item.unit_price);
+          taxExclusiveAmount += itemAmount;
+        }
+      }
+    } else {
+      // Fallback if no expense items
+      taxExclusiveAmount = amount / 1.16;
+      taxAmount = amount - taxExclusiveAmount;
+    }
+
+    // Create journal entry with tax-exclusive amount + tax amount
     const [journalResult] = await connection.query(
       `INSERT INTO journal_entries (entry_number, entry_date, reference, description, total_debit, total_credit, status, created_by)
        VALUES (?, ?, ?, ?, ?, ?, 'posted', 1)`,
@@ -626,8 +653,8 @@ const postExpense = async (req, res) => {
         date,
         reference || '',
         description || 'Expense posted',
-        amount,
-        amount
+        taxExclusiveAmount + taxAmount, // Total debit (expense + tax)
+        taxExclusiveAmount + taxAmount  // Total credit (payment/accrued)
       ]
     );
     const journalEntryId = journalResult.insertId;
@@ -637,7 +664,7 @@ const postExpense = async (req, res) => {
       await connection.query(
         `INSERT INTO expense_details (journal_entry_id, supplier_id, amount, created_at)
          VALUES (?, ?, ?, NOW())`,
-        [journalEntryId, supplier_id, amount]
+        [journalEntryId, supplier_id, taxExclusiveAmount + taxAmount]
       );
     }
 
@@ -663,26 +690,37 @@ const postExpense = async (req, res) => {
             descriptions: []
           };
         }
-        expenseAccountGroups[accountId].totalAmount += item.amount;
+        // Use tax-exclusive amount for expense accounts
+        const itemTaxExclusiveAmount = parseFloat(item.quantity) * parseFloat(item.unit_price);
+        expenseAccountGroups[accountId].totalAmount += itemTaxExclusiveAmount;
         expenseAccountGroups[accountId].descriptions.push(item.description);
       }
     }
 
-    // Create separate journal entry lines for each expense account
+    // Create separate journal entry lines for each expense account (tax-exclusive amounts)
     for (const [accountId, group] of Object.entries(expenseAccountGroups)) {
       const accountDescription = group.descriptions.join('; ');
-      await connection.query(
-        `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
-         VALUES (?, ?, ?, 0, ?)`,
+    await connection.query(
+      `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+       VALUES (?, ?, ?, 0, ?)`,
         [journalEntryId, parseInt(accountId), group.totalAmount, accountDescription || 'Expense']
       );
     }
+
+    // Create journal entry line for Purchase Tax Control Account (if there's tax)
+    if (taxAmount > 0) {
+      await connection.query(
+        `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+         VALUES (?, ?, ?, 0, ?)`,
+        [journalEntryId, vatAccountId, taxAmount, 'Purchase Tax Control']
+      );
+    }
     
-    // Credit payment or accrued account
+    // Credit payment or accrued account (total amount including tax)
     await connection.query(
       `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
        VALUES (?, ?, 0, ?, ?)`,
-      [journalEntryId, creditAccountId, amount, description || (is_paid ? 'Expense payment' : 'Accrued expense')]
+      [journalEntryId, creditAccountId, taxExclusiveAmount + taxAmount, description || (is_paid ? 'Expense payment' : 'Accrued expense')]
     );
 
     // Update account_ledger for credit account (credit, reduces cash/bank or increases accrued)
@@ -693,7 +731,7 @@ const postExpense = async (req, res) => {
         [payment_account_id]
       );
       const prevPaymentBalance = lastPaymentLedger.length > 0 ? parseFloat(lastPaymentLedger[0].running_balance) : 0;
-      const newPaymentBalance = prevPaymentBalance - amount;
+      const newPaymentBalance = prevPaymentBalance - (taxExclusiveAmount + taxAmount);
       await connection.query(
         `INSERT INTO account_ledger (account_id, date, description, reference_type, reference_id, debit, credit, running_balance, status)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed')`,
@@ -704,7 +742,7 @@ const postExpense = async (req, res) => {
           'expense',
           journalEntryId,
           0,
-          amount,
+          taxExclusiveAmount + taxAmount,
           newPaymentBalance
         ]
       );
@@ -715,7 +753,7 @@ const postExpense = async (req, res) => {
         [creditAccountId]
       );
       const prevAccruedBalance = lastAccruedLedger.length > 0 ? parseFloat(lastAccruedLedger[0].running_balance) : 0;
-      const newAccruedBalance = prevAccruedBalance + amount;
+      const newAccruedBalance = prevAccruedBalance + (taxExclusiveAmount + taxAmount);
       await connection.query(
         `INSERT INTO account_ledger (account_id, date, description, reference_type, reference_id, debit, credit, running_balance, status)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed')`,
@@ -726,40 +764,75 @@ const postExpense = async (req, res) => {
           'expense',
           journalEntryId,
           0,
-          amount,
+          taxExclusiveAmount + taxAmount,
           newAccruedBalance
         ]
       );
     }
 
-    // Update account_ledger for each expense account (debit, increases expense)
+    // Update account_ledger for each expense account (debit, increases expense - tax-exclusive amounts)
     for (const [accountId, group] of Object.entries(expenseAccountGroups)) {
-      const [lastExpenseLedger] = await connection.query(
-        'SELECT running_balance FROM account_ledger WHERE account_id = ? ORDER BY date DESC, id DESC LIMIT 1',
+    const [lastExpenseLedger] = await connection.query(
+      'SELECT running_balance FROM account_ledger WHERE account_id = ? ORDER BY date DESC, id DESC LIMIT 1',
         [parseInt(accountId)]
-      );
-      const prevExpenseBalance = lastExpenseLedger.length > 0 ? parseFloat(lastExpenseLedger[0].running_balance) : 0;
-      const newExpenseBalance = prevExpenseBalance + group.totalAmount;
+    );
+    const prevExpenseBalance = lastExpenseLedger.length > 0 ? parseFloat(lastExpenseLedger[0].running_balance) : 0;
+      const newExpenseBalance = prevExpenseBalance + group.totalAmount; // This is already tax-exclusive
       const accountDescription = group.descriptions.join('; ');
+      
+    await connection.query(
+      `INSERT INTO account_ledger (account_id, date, description, reference_type, reference_id, debit, credit, running_balance, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed')`,
+      [
+          parseInt(accountId),
+        date,
+          accountDescription || 'Expense',
+        'expense',
+        journalEntryId,
+          group.totalAmount, // Tax-exclusive amount
+        0,
+        newExpenseBalance
+      ]
+    );
+    }
+
+    // Update account_ledger for Purchase Tax Control Account (debit, increases tax control)
+    if (taxAmount > 0) {
+      const [lastVatLedger] = await connection.query(
+        'SELECT running_balance FROM account_ledger WHERE account_id = ? ORDER BY date DESC, id DESC LIMIT 1',
+        [vatAccountId]
+      );
+      const prevVatBalance = lastVatLedger.length > 0 ? parseFloat(lastVatLedger[0].running_balance) : 0;
+      const newVatBalance = prevVatBalance + taxAmount;
       
       await connection.query(
         `INSERT INTO account_ledger (account_id, date, description, reference_type, reference_id, debit, credit, running_balance, status)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed')`,
         [
-          parseInt(accountId),
+          vatAccountId,
           date,
-          accountDescription || 'Expense',
+          'Purchase Tax Control',
           'expense',
           journalEntryId,
-          group.totalAmount,
+          taxAmount,
           0,
-          newExpenseBalance
+          newVatBalance
         ]
       );
     }
 
     await connection.commit();
-    res.json({ success: true, message: 'Expense posted successfully' });
+    res.status(201).json({ 
+      success: true, 
+      message: 'Expense posted successfully',
+      data: { 
+        journal_entry_id: journalEntryId,
+        tax_exclusive_amount: taxExclusiveAmount,
+        tax_amount: taxAmount,
+        total_amount: taxExclusiveAmount + taxAmount
+      }
+    });
+
   } catch (error) {
     await connection.rollback();
     console.error('Error posting expense:', error);
@@ -1352,6 +1425,221 @@ const getCashAccountLedger = async (req, res) => {
   } catch (error) {
     console.error('Error fetching cash account ledger:', error);
     res.status(500).json({ success: false, error: 'Failed to fetch account ledger' });
+  }
+};
+
+// Create an expense payment
+const createExpensePayment = async (req, res) => {
+  try {
+    const {
+      expense_detail_id,
+      journal_entry_id,
+      supplier_id,
+      payment_date,
+      payment_method,
+      account_id,
+      amount,
+      reference,
+      notes,
+      currency
+    } = req.body;
+
+    if (!expense_detail_id || !journal_entry_id || !supplier_id || !payment_date || !payment_method || !account_id || amount === undefined) {
+      return res.status(400).json({ success: false, error: 'Missing required fields' });
+    }
+
+    const paymentNumber = `EP${Date.now()}`;
+    // Use a default staff ID (1) or get from req.user if it exists and is valid
+    const createdBy = 1;
+
+    const [result] = await db.query(`
+      INSERT INTO expense_payments (
+        payment_number, expense_detail_id, journal_entry_id, supplier_id, payment_date, currency,
+        payment_method, account_id, amount, reference, notes, status, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+    `, [
+      paymentNumber,
+      expense_detail_id,
+      journal_entry_id,
+      supplier_id,
+      payment_date,
+      currency || 'KES',
+      payment_method,
+      account_id,
+      amount,
+      reference || null,
+      notes || null,
+      createdBy
+    ]);
+
+    res.status(201).json({ success: true, data: { id: result.insertId, payment_number: paymentNumber } });
+  } catch (error) {
+    console.error('Error creating expense payment:', error);
+    res.status(500).json({ success: false, error: 'Failed to create expense payment' });
+  }
+};
+
+// Get pending expense payments
+const getPendingExpensePayments = async (req, res) => {
+  try {
+    const [payments] = await db.query(`
+      SELECT 
+        ep.id,
+        ep.payment_number,
+        ep.payment_date,
+        ep.payment_method,
+        ep.amount,
+        ep.reference,
+        ep.notes,
+        ep.status,
+        ep.currency,
+        ep.created_at,
+        s.company_name as supplier_name,
+        s.id as supplier_id,
+        coa.account_name as payment_account_name,
+        coa.account_code as payment_account_code,
+        je.entry_number as journal_entry_number,
+        je.reference as expense_reference,
+        je.description as expense_description,
+        ed.amount as expense_amount,
+        staff.name as created_by_name
+      FROM expense_payments ep
+      LEFT JOIN suppliers s ON ep.supplier_id = s.id
+      LEFT JOIN chart_of_accounts coa ON ep.account_id = coa.id
+      LEFT JOIN journal_entries je ON ep.journal_entry_id = je.id
+      LEFT JOIN expense_details ed ON ep.expense_detail_id = ed.id
+      LEFT JOIN staff ON ep.created_by = staff.id
+      WHERE ep.status = 'pending'
+      ORDER BY ep.created_at DESC
+    `);
+
+    res.json({ success: true, data: payments });
+  } catch (error) {
+    console.error('Error fetching pending expense payments:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch pending expense payments' });
+  }
+};
+
+// Update expense payment status
+const updateExpensePaymentStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, reference, notes } = req.body;
+
+    if (!status || !reference) {
+      return res.status(400).json({ success: false, error: 'Status and reference are required' });
+    }
+
+    if (!['confirmed', 'cancelled'].includes(status)) {
+      return res.status(400).json({ success: false, error: 'Invalid status. Must be "confirmed" or "cancelled"' });
+    }
+
+    // Start transaction
+    await db.query('START TRANSACTION');
+
+    try {
+              // Update expense payment status
+        const [updateResult] = await db.query(`
+          UPDATE expense_payments 
+          SET status = ?, reference = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND status = 'pending'
+        `, [status, reference, notes || null, id]);
+
+      if (updateResult.affectedRows === 0) {
+        await db.query('ROLLBACK');
+        return res.status(404).json({ success: false, error: 'Payment not found or already processed' });
+      }
+
+      // If confirming payment, create journal entry
+      if (status === 'confirmed') {
+        // Get payment details with expense account information
+        const [paymentDetails] = await db.query(`
+          SELECT ep.*, ed.amount as expense_amount, s.company_name as supplier_name,
+                 ei.expense_account_id, coa.account_name as expense_account_name
+          FROM expense_payments ep
+          JOIN expense_details ed ON ep.expense_detail_id = ed.id
+          JOIN expense_items ei ON ed.journal_entry_id = ei.journal_entry_id
+          JOIN chart_of_accounts coa ON ei.expense_account_id = coa.id
+          JOIN suppliers s ON ep.supplier_id = s.id
+          WHERE ep.id = ?
+          LIMIT 1
+        `, [id]);
+
+        if (paymentDetails.length === 0) {
+          await db.query('ROLLBACK');
+          return res.status(404).json({ success: false, error: 'Payment details not found' });
+        }
+
+        const payment = paymentDetails[0];
+        const entryNumber = `JE${Date.now()}`;
+        const description = `Payment to ${payment.supplier_name} - ${payment.reference}`;
+
+        // Create journal entry
+        const [journalResult] = await db.query(`
+          INSERT INTO journal_entries (
+            entry_number, entry_date, reference, description, 
+            total_debit, total_credit, status, created_by
+          ) VALUES (?, ?, ?, ?, ?, ?, 'posted', ?)
+        `, [
+          entryNumber,
+          new Date().toISOString().split('T')[0],
+          reference,
+          description,
+          payment.amount,
+          payment.amount,
+          1 // Default staff ID
+        ]);
+
+        const journalEntryId = journalResult.insertId;
+
+        // Create journal entry lines
+        // Line 1: Debit Accounts Payable (or Expense Account)
+        await db.query(`
+          INSERT INTO journal_entry_lines (
+            journal_entry_id, account_id, description, debit_amount, credit_amount, line_number
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `, [
+          journalEntryId,
+          payment.expense_account_id, // Use the actual expense account from expense items
+          `Payment to ${payment.supplier_name}`,
+          payment.amount,
+          0,
+          1
+        ]);
+
+        // Line 2: Credit Bank/Cash Account
+        await db.query(`
+          INSERT INTO journal_entry_lines (
+            journal_entry_id, account_id, description, debit_amount, credit_amount, line_number
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `, [
+          journalEntryId,
+          payment.account_id, // Use the existing account_id from expense_payments table
+          `Payment to ${payment.supplier_name}`,
+          0,
+          payment.amount,
+          2
+        ]);
+
+        // Update expense payment with journal entry ID
+        await db.query(`
+          UPDATE expense_payments 
+          SET journal_entry_id = ? 
+          WHERE id = ?
+        `, [journalEntryId, id]);
+      }
+
+      // Commit transaction
+      await db.query('COMMIT');
+
+      res.json({ success: true, message: `Payment ${status} successfully` });
+    } catch (error) {
+      await db.query('ROLLBACK');
+      throw error;
+    }
+  } catch (error) {
+    console.error('Error updating expense payment status:', error);
+    res.status(500).json({ success: false, error: 'Failed to update payment status' });
   }
 };
 
@@ -2012,4 +2300,7 @@ module.exports = {
   getExpenseInvoice,
   createJournalEntry,
   getProductsSaleReport,
+  createExpensePayment,
+  getPendingExpensePayments,
+  updateExpensePaymentStatus,
 }; 

@@ -63,6 +63,7 @@ const {
   getExpenseSummary,
   getExpenseItems,
   getJournalEntryById,
+  getExpenseInvoice,
   createJournalEntry,
   getProductsSaleReport
 } = require('../controllers/financialController');
@@ -266,6 +267,7 @@ router.post('/expenses', postExpense);
 router.get('/expenses', getAllExpenses);
 router.get('/expense-summary', getExpenseSummary);
 router.get('/expenses/:journal_entry_id/items', getExpenseItems);
+router.get('/expenses/:journal_entry_id/invoice', getExpenseInvoice);
 
 // Journal Entries Route
 router.get('/journal-entries/:id', getJournalEntryById);

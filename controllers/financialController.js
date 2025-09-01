@@ -1747,6 +1747,95 @@ const getJournalEntryById = async (req, res) => {
   }
 };
 
+// Get detailed expense information for invoice
+const getExpenseInvoice = async (req, res) => {
+  try {
+    const { journal_entry_id } = req.params;
+    
+    // Get expense details with supplier information
+    const [expenseDetails] = await db.query(`
+      SELECT 
+        ed.id,
+        ed.journal_entry_id,
+        ed.supplier_id,
+        ed.amount,
+        ed.created_at,
+        s.company_name as supplier_name,
+        s.contact_person,
+        s.email as supplier_email,
+        s.phone as supplier_phone,
+        s.address as supplier_address,
+        s.tax_id as supplier_tax_id,
+        je.entry_date,
+        je.reference,
+        je.description,
+        je.entry_number
+      FROM expense_details ed
+      JOIN journal_entries je ON ed.journal_entry_id = je.id
+      LEFT JOIN suppliers s ON ed.supplier_id = s.id
+      WHERE ed.journal_entry_id = ?
+    `, [journal_entry_id]);
+
+    if (expenseDetails.length === 0) {
+      return res.status(404).json({ success: false, error: 'Expense not found' });
+    }
+
+    // Get expense items with account information
+    const [expenseItems] = await db.query(`
+      SELECT 
+        ei.id,
+        ei.description,
+        ei.quantity,
+        ei.unit_price,
+        ei.tax_type,
+        ei.total_amount,
+        ei.created_at,
+        coa.account_name as expense_account_name,
+        coa.account_code as expense_account_code
+      FROM expense_items ei
+      JOIN chart_of_accounts coa ON ei.expense_account_id = coa.id
+      WHERE ei.journal_entry_id = ?
+      ORDER BY ei.id
+    `, [journal_entry_id]);
+
+    // Calculate tax amount for each item and totals
+    const itemsWithTax = expenseItems.map(item => {
+      let itemTaxAmount = 0;
+      let taxExclusiveAmount = 0;
+      
+      // Calculate tax-exclusive amount (quantity × unit_price)
+      taxExclusiveAmount = parseFloat(item.quantity) * parseFloat(item.unit_price);
+      
+      if (item.tax_type === '16%') {
+        itemTaxAmount = taxExclusiveAmount * 0.16;
+      }
+      
+      return {
+        ...item,
+        tax_exclusive_amount: taxExclusiveAmount,
+        tax_amount: itemTaxAmount
+      };
+    });
+
+    const subtotal = itemsWithTax.reduce((sum, item) => sum + item.tax_exclusive_amount, 0);
+    const taxAmount = itemsWithTax.reduce((sum, item) => sum + item.tax_amount, 0);
+    const total = subtotal + taxAmount;
+
+    const result = {
+      ...expenseDetails[0],
+      items: itemsWithTax,
+      subtotal: subtotal,
+      tax_amount: taxAmount,
+      total: total
+    };
+
+    res.json({ success: true, data: result });
+  } catch (error) {
+    console.error('Error fetching expense invoice:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch expense invoice' });
+  }
+};
+
 // Create journal entry
 const createJournalEntry = async (req, res) => {
   const connection = await db.getConnection();
@@ -1920,6 +2009,7 @@ module.exports = {
   getExpenseSummary,
   getExpenseItems,
   getJournalEntryById,
+  getExpenseInvoice,
   createJournalEntry,
   getProductsSaleReport,
 }; 

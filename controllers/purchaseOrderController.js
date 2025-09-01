@@ -20,6 +20,9 @@ const purchaseOrderController = {
           SELECT 
             po.*,
             s.company_name as supplier_name,
+            s.supplier_code as supplier_code,
+            s.address as supplier_address,
+            s.tax_id as supplier_tax_id,
             u.full_name as created_by_name,
             (
               SELECT COALESCE(SUM(amount), 0)
@@ -41,6 +44,9 @@ const purchaseOrderController = {
           SELECT 
             po.*,
             s.company_name as supplier_name,
+            s.supplier_code as supplier_code,
+            s.address as supplier_address,
+            s.tax_id as supplier_tax_id,
             u.full_name as created_by_name
           FROM purchase_orders po
           LEFT JOIN suppliers s ON po.supplier_id = s.id
@@ -78,6 +84,7 @@ const purchaseOrderController = {
         SELECT 
           po.*,
           s.company_name as supplier_name,
+          s.supplier_code as supplier_code,
           u.full_name as created_by_name
         FROM purchase_orders po
         LEFT JOIN suppliers s ON po.supplier_id = s.id
@@ -183,7 +190,10 @@ const purchaseOrderController = {
       const [createdPO] = await db.query(`
         SELECT 
           po.*,
-          s.company_name as supplier_name
+          s.company_name as supplier_name,
+          s.supplier_code as supplier_code,
+          s.address as supplier_address,
+          s.tax_id as supplier_tax_id
         FROM purchase_orders po
         LEFT JOIN suppliers s ON po.supplier_id = s.id
         WHERE po.id = ?
@@ -551,6 +561,7 @@ const purchaseOrderController = {
         SELECT 
           po.*,
           s.company_name as supplier_name,
+          s.supplier_code as supplier_code,
           u.full_name as created_by_name
         FROM purchase_orders po
         LEFT JOIN suppliers s ON po.supplier_id = s.id

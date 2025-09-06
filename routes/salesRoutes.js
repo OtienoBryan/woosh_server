@@ -72,6 +72,9 @@ router.get('/master-sales/categories', salesController.getMasterSalesCategories)
 // Get available sales reps for master sales filter
 router.get('/master-sales/sales-reps', salesController.getMasterSalesSalesReps);
 
+// Get detailed sales data for a specific client and month
+router.get('/client-month-details', salesController.getClientMonthDetails);
+
 // Get sales rep master report
 router.get('/rep/master-report', salesController.getSalesRepMasterReport);
 

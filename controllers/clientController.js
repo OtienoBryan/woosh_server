@@ -21,20 +21,20 @@ const clientController = {
       let params = [];
       const whereClauses = [];
       if (search) {
-        whereClauses.push('(name LIKE ? OR contact LIKE ? OR email LIKE ?)');
+        whereClauses.push('(c.name LIKE ? OR c.contact LIKE ? OR c.email LIKE ?)');
         const like = `%${search}%`;
         params.push(like, like, like);
       }
       if (countryId) {
-        whereClauses.push('countryId = ?');
+        whereClauses.push('c.countryId = ?');
         params.push(countryId);
       }
       if (regionId) {
-        whereClauses.push('region_id = ?');
+        whereClauses.push('c.region_id = ?');
         params.push(regionId);
       }
       if (routeId) {
-        whereClauses.push('route_id = ?');
+        whereClauses.push('c.route_id = ?');
         params.push(routeId);
       }
       if (whereClauses.length > 0) {
@@ -42,7 +42,7 @@ const clientController = {
       }
 
       // Get total count
-      const [countRows] = await db.query(`SELECT COUNT(*) as count FROM Clients ${where}`, params);
+      const [countRows] = await db.query(`SELECT COUNT(*) as count FROM Clients c ${where}`, params);
       const total = countRows[0].count;
       const totalPages = getAllClients ? 1 : Math.ceil(total / limit);
 
@@ -54,11 +54,13 @@ const clientController = {
           `SELECT c.*,
                   COALESCE(CAST(c.balance AS DECIMAL(15,2)), 0) AS balance,
                   oc.name as client_type_name,
+                  oa.name as outlet_account_name,
                   co.name as country_name,
                   r.name as region_name,
                   rt.name as route_name
            FROM Clients c
            LEFT JOIN outlet_categories oc ON c.client_type = oc.id
+           LEFT JOIN outlet_accounts oa ON c.outlet_account = oa.id
            LEFT JOIN Country co ON c.countryId = co.id
            LEFT JOIN Regions r ON c.region_id = r.id
            LEFT JOIN routes rt ON c.route_id_update = rt.id
@@ -72,11 +74,13 @@ const clientController = {
           `SELECT c.*,
                   COALESCE(CAST(c.balance AS DECIMAL(15,2)), 0) AS balance,
                   oc.name as client_type_name,
+                  oa.name as outlet_account_name,
                   co.name as country_name,
                   r.name as region_name,
                   rt.name as route_name
            FROM Clients c
            LEFT JOIN outlet_categories oc ON c.client_type = oc.id
+           LEFT JOIN outlet_accounts oa ON c.outlet_account = oa.id
            LEFT JOIN Country co ON c.countryId = co.id
            LEFT JOIN Regions r ON c.region_id = r.id
            LEFT JOIN routes rt ON c.route_id_update = rt.id
@@ -149,7 +153,8 @@ const clientController = {
         name, address, email,
         region_id, route_id,
         contact, tax_pin, status,
-        countryId, country_id, credit_limit, payment_terms
+        countryId, country_id, credit_limit, payment_terms,
+        client_type, outlet_account
       } = req.body;
       
       if (!name || !email) {
@@ -172,6 +177,8 @@ const clientController = {
       if (finalCountryId) { fields.push('countryId'); values.push(finalCountryId); }
       if (credit_limit) { fields.push('credit_limit'); values.push(credit_limit); }
       if (payment_terms) { fields.push('payment_terms'); values.push(payment_terms); }
+      if (client_type) { fields.push('client_type'); values.push(client_type); }
+      if (outlet_account) { fields.push('outlet_account'); values.push(outlet_account); }
       
       const placeholders = fields.map(() => '?').join(', ');
       const sql = `INSERT INTO Clients (${fields.join(', ')}) VALUES (${placeholders})`;
@@ -192,11 +199,15 @@ const clientController = {
   updateClient: async (req, res) => {
     try {
       const { id } = req.params;
+      console.log('[updateClient] Received request for client ID:', id);
+      console.log('[updateClient] Request body:', JSON.stringify(req.body, null, 2));
+      
       const {
         name, address, email,
-        region_id, route_id,
+        region_id, route_id, route_name,
         contact, tax_pin, status,
-        countryId, country_id, credit_limit, payment_terms
+        countryId, country_id, credit_limit, payment_terms,
+        client_type, outlet_account
       } = req.body;
       
       // Handle both field name variations for compatibility
@@ -211,12 +222,15 @@ const clientController = {
       if (address !== undefined) { updates.push('address = ?'); values.push(address); }
       if (region_id !== undefined) { updates.push('region_id = ?'); values.push(region_id); }
       if (route_id !== undefined) { updates.push('route_id_update = ?'); values.push(route_id); }
+      if (route_name !== undefined) { updates.push('route_name_update = ?'); values.push(route_name); }
       if (contact !== undefined) { updates.push('contact = ?'); values.push(contact); }
       if (tax_pin !== undefined) { updates.push('tax_pin = ?'); values.push(tax_pin); }
       if (status !== undefined) { updates.push('status = ?'); values.push(status); }
       if (finalCountryId !== undefined) { updates.push('countryId = ?'); values.push(finalCountryId); }
       if (credit_limit !== undefined) { updates.push('credit_limit = ?'); values.push(credit_limit); }
       if (payment_terms !== undefined) { updates.push('payment_terms = ?'); values.push(payment_terms); }
+      if (client_type !== undefined) { updates.push('client_type = ?'); values.push(client_type); }
+      if (outlet_account !== undefined) { updates.push('outlet_account = ?'); values.push(outlet_account); }
       
       if (updates.length === 0) {
         return res.status(400).json({ message: 'No fields to update' });
@@ -225,8 +239,9 @@ const clientController = {
       values.push(id); // Add the WHERE clause parameter
       const sql = `UPDATE Clients SET ${updates.join(', ')} WHERE id = ?`;
       
-      console.log('Update client SQL:', sql);
-      console.log('Update client values:', values);
+      console.log('[updateClient] Fields to update:', updates);
+      console.log('[updateClient] Update client SQL:', sql);
+      console.log('[updateClient] Update client values:', values);
       
       await db.query(sql, values);
       const [updatedClient] = await db.query('SELECT * FROM Clients WHERE id = ?', [id]);

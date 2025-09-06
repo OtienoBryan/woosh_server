@@ -937,6 +937,14 @@ const salesOrderController = {
         ['35'] // Sales Tax Payable account ID
       );
       
+      const [costOfGoodsAccount] = await connection.query(
+        `SELECT id FROM chart_of_accounts WHERE account_code = '500000' LIMIT 1`
+      );
+      
+      const [inventoryAccount] = await connection.query(
+        `SELECT id FROM chart_of_accounts WHERE account_code = '100001' LIMIT 1`
+      );
+      
       if (arAccount.length && salesAccount.length) {
         console.log('Creating journal entry for invoice conversion');
         
@@ -1027,6 +1035,67 @@ const salesOrderController = {
         }
       }
       
+      // Calculate total cost of goods sold and create COGS journal entry
+      let totalCOGS = 0;
+      for (const item of items) {
+        // Get product cost price
+        const [productResult] = await connection.query(
+          'SELECT cost_price FROM products WHERE id = ?',
+          [item.product_id]
+        );
+        if (productResult.length > 0) {
+          const costPrice = parseFloat(productResult[0].cost_price);
+          totalCOGS += item.quantity * costPrice;
+        }
+      }
+      
+      console.log('Total COGS calculated:', totalCOGS);
+      
+      // Create COGS journal entry if COGS > 0 and accounts exist
+      if (totalCOGS > 0 && costOfGoodsAccount.length && inventoryAccount.length) {
+        console.log('Creating COGS journal entry');
+        
+        const [cogsJournalResult] = await connection.query(
+          `INSERT INTO journal_entries (entry_number, entry_date, reference, description, total_debit, total_credit, status, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, 'posted', ?)`,
+          [
+            `JE-COGS-${id}-${Date.now()}`,
+            originalOrder.order_date,
+            `INV-${id}`,
+            `Cost of goods sold for invoice INV-${id}`,
+            totalCOGS,
+            totalCOGS,
+            currentUserId
+          ]
+        );
+        const cogsJournalEntryId = cogsJournalResult.insertId;
+        console.log('COGS journal entry created with ID:', cogsJournalEntryId);
+        
+        // Debit Cost of Goods Sold
+        await connection.query(
+          `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+           VALUES (?, ?, ?, 0, ?)`,
+          [cogsJournalEntryId, costOfGoodsAccount[0].id, totalCOGS, `COGS - Invoice INV-${id}`]
+        );
+        
+        // Credit Inventory
+        await connection.query(
+          `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+           VALUES (?, ?, 0, ?, ?)`,
+          [cogsJournalEntryId, inventoryAccount[0].id, totalCOGS, `Inventory reduction - Invoice INV-${id}`]
+        );
+        
+        console.log('COGS journal entry created successfully');
+      } else {
+        if (totalCOGS === 0) {
+          console.log('No COGS to record (total COGS = 0)');
+        } else {
+          console.error('Required COGS accounts not found for journal entry creation');
+          console.error('COGS Account (code: 500000):', costOfGoodsAccount);
+          console.error('Inventory Account (code: 100001):', inventoryAccount);
+        }
+      }
+      
       await connection.commit();
       console.log('=== INVOICE CONVERSION SUCCESSFUL ===');
       console.log('Order ID:', id);
@@ -1035,7 +1104,7 @@ const salesOrderController = {
       
       res.json({ 
         success: true, 
-        message: 'Order successfully converted to invoice',
+        message: 'Order successfully converted to invoice with complete journal entries (including COGS)',
         orderId: id,
         status: 'confirmed',
         my_status: 1

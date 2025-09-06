@@ -87,7 +87,53 @@ const reportsController = {
       const otherIncome = parseFloat(revenueResult.find(r => r.account_code === '400006')?.balance || 0);
       const totalRevenue = salesRevenue + otherIncome;
 
-      const costOfGoodsSold = parseFloat(allExpenses.find(e => e.account_code === '500000')?.balance || 0);
+      // Calculate Cost of Goods Sold directly from sales_order_items
+      let costOfGoodsSold = 0;
+      try {
+        // Build date filter for sales orders
+        let salesOrderDateFilter = '';
+        let salesOrderParams = [];
+        
+        if (period === 'custom' && start_date && end_date) {
+          salesOrderDateFilter = 'AND so.order_date BETWEEN ? AND ?';
+          salesOrderParams = [start_date, end_date];
+        } else {
+          switch (period) {
+            case 'current_month':
+              salesOrderDateFilter = 'AND YEAR(so.order_date) = YEAR(CURDATE()) AND MONTH(so.order_date) = MONTH(CURDATE())';
+              break;
+            case 'last_month':
+              salesOrderDateFilter = 'AND YEAR(so.order_date) = YEAR(DATE_SUB(CURDATE(), INTERVAL 1 MONTH)) AND MONTH(so.order_date) = MONTH(DATE_SUB(CURDATE(), INTERVAL 1 MONTH))';
+              break;
+            case 'current_quarter':
+              salesOrderDateFilter = 'AND YEAR(so.order_date) = YEAR(CURDATE()) AND QUARTER(so.order_date) = QUARTER(CURDATE())';
+              break;
+            case 'current_year':
+              salesOrderDateFilter = 'AND YEAR(so.order_date) = YEAR(CURDATE())';
+              break;
+            default:
+              salesOrderDateFilter = 'AND YEAR(so.order_date) = YEAR(CURDATE()) AND MONTH(so.order_date) = MONTH(CURDATE())';
+          }
+        }
+        
+        const [cogsResult] = await db.query(`
+          SELECT SUM(soi.quantity * p.cost_price) as total_cogs
+          FROM sales_order_items soi
+          LEFT JOIN sales_orders so ON soi.sales_order_id = so.id
+          LEFT JOIN products p ON soi.product_id = p.id
+          WHERE so.status = 'confirmed' 
+          AND p.cost_price > 0
+          ${salesOrderDateFilter}
+        `, salesOrderParams);
+        
+        costOfGoodsSold = parseFloat(cogsResult[0]?.total_cogs || 0);
+        console.log('COGS calculated from sales_order_items:', costOfGoodsSold);
+      } catch (cogsError) {
+        console.error('Error calculating COGS from sales_order_items:', cogsError);
+        // Fallback to journal entries if direct calculation fails
+        costOfGoodsSold = parseFloat(allExpenses.find(e => e.account_code === '500000')?.balance || 0);
+        console.log('COGS fallback to journal entries:', costOfGoodsSold);
+      }
 
       // Get depreciation expenses specifically (account_type = 17)
       const depreciationExpenses = allExpenses.filter(e => 
@@ -768,7 +814,8 @@ const reportsController = {
   // Get Product Performance Report
   getProductPerformanceReport: async (req, res) => {
     try {
-      const { startDate, endDate, productType, country, region } = req.query;
+      const { startDate, endDate, productType, country, region, salesRep } = req.query;
+      console.log('Product performance query params:', { startDate, endDate, productType, country, region, salesRep });
       let whereClauses = [];
       const params = [];
       if (startDate && endDate) {
@@ -795,8 +842,12 @@ const reportsController = {
         whereClauses.push('r.name = ?');
         params.push(region);
       }
+      if (salesRep) {
+        whereClauses.push('so.salesrep = ?');
+        params.push(salesRep);
+      }
       const whereClause = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
-      const [rows] = await db.query(`
+      const query = `
         SELECT 
           p.id as product_id,
           p.product_name,
@@ -812,7 +863,10 @@ const reportsController = {
         ${whereClause}
         GROUP BY p.id, p.product_name, p.category_id
         ORDER BY total_sales_value DESC
-      `, params);
+      `;
+      console.log('Executing query:', query);
+      console.log('Query params:', params);
+      const [rows] = await db.query(query, params);
       res.json({ success: true, data: rows });
     } catch (error) {
       console.error('Error fetching product performance report:', error);
@@ -984,6 +1038,594 @@ const reportsController = {
     } catch (error) {
       console.error('Error fetching journal entries for invoice:', error);
       res.status(500).json({ success: false, error: 'Failed to fetch journal entries for invoice' });
+    }
+  },
+
+  // Get Cost of Goods Sold details
+  getCostOfGoodsSoldDetails: async (req, res) => {
+    try {
+      const { period, start_date, end_date, category_id } = req.query;
+      
+      console.log('COGS Details API called with:', { period, start_date, end_date, category_id });
+      
+      // Build date filter based on period
+      let dateFilter = '';
+      let params = [];
+      
+      if (period === 'custom' && start_date && end_date) {
+        dateFilter = 'AND so.order_date BETWEEN ? AND ?';
+        params = [start_date, end_date];
+      } else if (period === 'current_month') {
+        dateFilter = 'AND YEAR(so.order_date) = YEAR(CURDATE()) AND MONTH(so.order_date) = MONTH(CURDATE())';
+      } else if (period === 'last_month') {
+        dateFilter = 'AND YEAR(so.order_date) = YEAR(CURDATE() - INTERVAL 1 MONTH) AND MONTH(so.order_date) = MONTH(CURDATE() - INTERVAL 1 MONTH)';
+      } else if (period === 'current_year') {
+        dateFilter = 'AND YEAR(so.order_date) = YEAR(CURDATE())';
+      } else if (period === 'last_year') {
+        dateFilter = 'AND YEAR(so.order_date) = YEAR(CURDATE() - INTERVAL 1 YEAR)';
+      }
+      
+      // Build category filter
+      let categoryFilter = '';
+      if (category_id && category_id !== 'all') {
+        categoryFilter = 'AND p.category_id = ?';
+        params.push(category_id);
+      }
+      
+      console.log('Date filter:', dateFilter);
+      console.log('Category filter:', categoryFilter);
+      console.log('Params:', params);
+
+      // Query to get COGS details from sales_order_items
+      const [rows] = await db.query(`
+        SELECT 
+          soi.id as item_id,
+          soi.sales_order_id,
+          so.so_number,
+          so.order_date,
+          c.name as customer_name,
+          p.product_name,
+          p.product_code,
+          p.cost_price,
+          soi.quantity,
+          soi.unit_price,
+          soi.total_price,
+          (soi.quantity * p.cost_price) as total_cost,
+          soi.tax_type,
+          soi.net_price,
+          soi.tax_amount,
+          cat.name as category_name
+        FROM sales_order_items soi
+        LEFT JOIN sales_orders so ON soi.sales_order_id = so.id
+        LEFT JOIN Clients c ON so.client_id = c.id
+        LEFT JOIN products p ON soi.product_id = p.id
+        LEFT JOIN Category cat ON p.category_id = cat.id
+        WHERE so.status = 'confirmed' 
+        AND p.cost_price > 0
+        ${dateFilter}
+        ${categoryFilter}
+        ORDER BY so.order_date DESC, so.id DESC, soi.id ASC
+      `, params);
+
+      console.log('Query executed successfully. Rows returned:', rows.length);
+      console.log('Sample row:', rows[0]);
+
+      // Calculate summary statistics
+      const totalItems = rows.length;
+      const totalQuantity = rows.reduce((sum, row) => sum + parseFloat(row.quantity), 0);
+      const totalCost = rows.reduce((sum, row) => sum + parseFloat(row.total_cost), 0);
+      const totalRevenue = rows.reduce((sum, row) => sum + parseFloat(row.total_price), 0);
+      const totalTax = rows.reduce((sum, row) => sum + parseFloat(row.tax_amount || 0), 0);
+      const totalProfit = totalRevenue - totalCost;
+      const netProfit = totalRevenue - totalCost - totalTax;
+      const profitMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
+      const netProfitMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
+
+      // Group by product for summary
+      const productSummary = {};
+      rows.forEach(row => {
+        const productKey = `${row.product_id}-${row.product_name}`;
+        if (!productSummary[productKey]) {
+          productSummary[productKey] = {
+            product_id: row.product_id,
+            product_name: row.product_name,
+            product_code: row.product_code,
+            cost_price: parseFloat(row.cost_price),
+            total_quantity: 0,
+            total_cost: 0,
+            total_revenue: 0,
+            total_profit: 0,
+            net_profit: 0,
+            tax_type: row.tax_type,
+            total_tax: 0,
+            first_sale_date: row.order_date,
+            last_sale_date: row.order_date
+          };
+        }
+        productSummary[productKey].total_quantity += parseFloat(row.quantity);
+        productSummary[productKey].total_cost += parseFloat(row.total_cost);
+        productSummary[productKey].total_revenue += parseFloat(row.total_price);
+        productSummary[productKey].total_profit += (parseFloat(row.total_price) - parseFloat(row.total_cost));
+        productSummary[productKey].total_tax += parseFloat(row.tax_amount || 0);
+        
+        // Calculate net profit (total_price - total_cost - total_tax)
+        const netProfit = parseFloat(row.total_price) - parseFloat(row.total_cost) - parseFloat(row.tax_amount || 0);
+        productSummary[productKey].net_profit = (productSummary[productKey].net_profit || 0) + netProfit;
+        
+        // Update first and last sale dates
+        if (new Date(row.order_date) < new Date(productSummary[productKey].first_sale_date)) {
+          productSummary[productKey].first_sale_date = row.order_date;
+        }
+        if (new Date(row.order_date) > new Date(productSummary[productKey].last_sale_date)) {
+          productSummary[productKey].last_sale_date = row.order_date;
+        }
+      });
+
+      const productSummaryArray = Object.values(productSummary).map(product => ({
+        ...product,
+        profit_margin: product.total_revenue > 0 ? (product.total_profit / product.total_revenue) * 100 : 0,
+        net_profit_margin: product.total_revenue > 0 ? (product.net_profit / product.total_revenue) * 100 : 0
+      }));
+
+      // Group by category for category summary
+      const categorySummary = {};
+      rows.forEach(row => {
+        const categoryKey = row.category_name || 'Uncategorized';
+        if (!categorySummary[categoryKey]) {
+          categorySummary[categoryKey] = {
+            category_name: categoryKey,
+            total_items: 0,
+            total_quantity: 0,
+            total_cost: 0,
+            total_revenue: 0,
+            total_profit: 0,
+            net_profit: 0,
+            total_tax: 0,
+            profit_margin: 0,
+            net_profit_margin: 0
+          };
+        }
+        categorySummary[categoryKey].total_items += 1;
+        categorySummary[categoryKey].total_quantity += parseFloat(row.quantity);
+        categorySummary[categoryKey].total_cost += parseFloat(row.total_cost);
+        categorySummary[categoryKey].total_revenue += parseFloat(row.total_price);
+        categorySummary[categoryKey].total_profit += (parseFloat(row.total_price) - parseFloat(row.total_cost));
+        categorySummary[categoryKey].total_tax += parseFloat(row.tax_amount || 0);
+        
+        // Calculate net profit (total_price - total_cost - total_tax)
+        const netProfit = parseFloat(row.total_price) - parseFloat(row.total_cost) - parseFloat(row.tax_amount || 0);
+        categorySummary[categoryKey].net_profit += netProfit;
+      });
+
+      const categorySummaryArray = Object.values(categorySummary).map(category => ({
+        ...category,
+        profit_margin: category.total_revenue > 0 ? (category.total_profit / category.total_revenue) * 100 : 0,
+        net_profit_margin: category.total_revenue > 0 ? (category.net_profit / category.total_revenue) * 100 : 0
+      }));
+
+      res.json({ 
+        success: true, 
+        data: {
+          items: rows,
+          summary: {
+            total_items: totalItems,
+            total_quantity: totalQuantity,
+            total_cost: totalCost,
+            total_revenue: totalRevenue,
+            total_tax: totalTax,
+            total_profit: totalProfit,
+            net_profit: netProfit,
+            profit_margin: profitMargin,
+            net_profit_margin: netProfitMargin
+          },
+          product_summary: productSummaryArray,
+          category_summary: categorySummaryArray
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching COGS details:', error);
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to fetch COGS details',
+        details: error.message 
+      });
+    }
+  },
+
+  // Get Sales Revenue details
+  getSalesRevenueDetails: async (req, res) => {
+    try {
+      const { period, start_date, end_date, category_id } = req.query;
+      
+      console.log('Sales Revenue Details API called with:', { period, start_date, end_date, category_id });
+      
+      // Build date filter based on period
+      let dateFilter = '';
+      let params = [];
+      
+      if (period === 'custom' && start_date && end_date) {
+        dateFilter = 'AND so.order_date BETWEEN ? AND ?';
+        params = [start_date, end_date];
+      } else if (period === 'current_month') {
+        dateFilter = 'AND YEAR(so.order_date) = YEAR(CURDATE()) AND MONTH(so.order_date) = MONTH(CURDATE())';
+      } else if (period === 'last_month') {
+        dateFilter = 'AND YEAR(so.order_date) = YEAR(CURDATE() - INTERVAL 1 MONTH) AND MONTH(so.order_date) = MONTH(CURDATE() - INTERVAL 1 MONTH)';
+      } else if (period === 'current_year') {
+        dateFilter = 'AND YEAR(so.order_date) = YEAR(CURDATE())';
+      } else if (period === 'last_year') {
+        dateFilter = 'AND YEAR(so.order_date) = YEAR(CURDATE() - INTERVAL 1 YEAR)';
+      }
+      
+      // Build category filter
+      let categoryFilter = '';
+      if (category_id && category_id !== 'all') {
+        categoryFilter = 'AND p.category_id = ?';
+        params.push(category_id);
+      }
+      
+      console.log('Date filter:', dateFilter);
+      console.log('Category filter:', categoryFilter);
+      console.log('Params:', params);
+
+      // Query to get sales revenue details from sales_order_items
+      const [rows] = await db.query(`
+        SELECT 
+          soi.id as item_id,
+          soi.sales_order_id,
+          so.so_number,
+          so.order_date,
+          c.name as customer_name,
+          p.product_name,
+          p.product_code,
+          p.cost_price,
+          soi.quantity,
+          soi.unit_price,
+          soi.total_price,
+          (soi.quantity * p.cost_price) as total_cost,
+          soi.tax_type,
+          soi.net_price,
+          soi.tax_amount,
+          cat.name as category_name
+        FROM sales_order_items soi
+        LEFT JOIN sales_orders so ON soi.sales_order_id = so.id
+        LEFT JOIN Clients c ON so.client_id = c.id
+        LEFT JOIN products p ON soi.product_id = p.id
+        LEFT JOIN Category cat ON p.category_id = cat.id
+        WHERE so.status = 'confirmed' 
+        ${dateFilter}
+        ${categoryFilter}
+        ORDER BY so.order_date DESC, so.id DESC, soi.id ASC
+      `, params);
+
+      console.log('Query executed successfully. Rows returned:', rows.length);
+      console.log('Sample row:', rows[0]);
+
+      // Calculate summary statistics
+      const totalItems = rows.length;
+      const totalQuantity = rows.reduce((sum, row) => sum + parseFloat(row.quantity), 0);
+      const totalCost = rows.reduce((sum, row) => sum + parseFloat(row.total_cost), 0);
+      const totalRevenue = rows.reduce((sum, row) => sum + parseFloat(row.total_price), 0);
+      const totalTax = rows.reduce((sum, row) => sum + parseFloat(row.tax_amount || 0), 0);
+      const totalProfit = totalRevenue - totalCost;
+      const netProfit = totalRevenue - totalCost - totalTax;
+      const profitMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
+      const netProfitMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
+
+      // Group by product for summary
+      const productSummary = {};
+      rows.forEach(row => {
+        const productKey = `${row.product_id}-${row.product_name}`;
+        if (!productSummary[productKey]) {
+          productSummary[productKey] = {
+            product_id: row.product_id,
+            product_name: row.product_name,
+            product_code: row.product_code,
+            cost_price: parseFloat(row.cost_price),
+            total_quantity: 0,
+            total_cost: 0,
+            total_revenue: 0,
+            total_profit: 0,
+            net_profit: 0,
+            tax_type: row.tax_type,
+            total_tax: 0,
+            first_sale_date: row.order_date,
+            last_sale_date: row.order_date
+          };
+        }
+        productSummary[productKey].total_quantity += parseFloat(row.quantity);
+        productSummary[productKey].total_cost += parseFloat(row.total_cost);
+        productSummary[productKey].total_revenue += parseFloat(row.total_price);
+        productSummary[productKey].total_profit += (parseFloat(row.total_price) - parseFloat(row.total_cost));
+        productSummary[productKey].total_tax += parseFloat(row.tax_amount || 0);
+        
+        // Calculate net profit (total_price - total_cost - total_tax)
+        const netProfit = parseFloat(row.total_price) - parseFloat(row.total_cost) - parseFloat(row.tax_amount || 0);
+        productSummary[productKey].net_profit = (productSummary[productKey].net_profit || 0) + netProfit;
+        
+        // Update first and last sale dates
+        if (new Date(row.order_date) < new Date(productSummary[productKey].first_sale_date)) {
+          productSummary[productKey].first_sale_date = row.order_date;
+        }
+        if (new Date(row.order_date) > new Date(productSummary[productKey].last_sale_date)) {
+          productSummary[productKey].last_sale_date = row.order_date;
+        }
+      });
+
+      const productSummaryArray = Object.values(productSummary).map(product => ({
+        ...product,
+        profit_margin: product.total_revenue > 0 ? (product.total_profit / product.total_revenue) * 100 : 0,
+        net_profit_margin: product.total_revenue > 0 ? (product.net_profit / product.total_revenue) * 100 : 0
+      }));
+
+      // Group by category for category summary
+      const categorySummary = {};
+      rows.forEach(row => {
+        const categoryKey = row.category_name || 'Uncategorized';
+        if (!categorySummary[categoryKey]) {
+          categorySummary[categoryKey] = {
+            category_name: categoryKey,
+            total_items: 0,
+            total_quantity: 0,
+            total_cost: 0,
+            total_revenue: 0,
+            total_profit: 0,
+            net_profit: 0,
+            total_tax: 0,
+            profit_margin: 0,
+            net_profit_margin: 0
+          };
+        }
+        categorySummary[categoryKey].total_items += 1;
+        categorySummary[categoryKey].total_quantity += parseFloat(row.quantity);
+        categorySummary[categoryKey].total_cost += parseFloat(row.total_cost);
+        categorySummary[categoryKey].total_revenue += parseFloat(row.total_price);
+        categorySummary[categoryKey].total_profit += (parseFloat(row.total_price) - parseFloat(row.total_cost));
+        categorySummary[categoryKey].total_tax += parseFloat(row.tax_amount || 0);
+        
+        // Calculate net profit (total_price - total_cost - total_tax)
+        const netProfit = parseFloat(row.total_price) - parseFloat(row.total_cost) - parseFloat(row.tax_amount || 0);
+        categorySummary[categoryKey].net_profit += netProfit;
+      });
+
+      const categorySummaryArray = Object.values(categorySummary).map(category => ({
+        ...category,
+        profit_margin: category.total_revenue > 0 ? (category.total_profit / category.total_revenue) * 100 : 0,
+        net_profit_margin: category.total_revenue > 0 ? (category.net_profit / category.total_revenue) * 100 : 0
+      }));
+
+      res.json({ 
+        success: true, 
+        data: {
+          items: rows,
+          summary: {
+            total_items: totalItems,
+            total_quantity: totalQuantity,
+            total_cost: totalCost,
+            total_revenue: totalRevenue,
+            total_tax: totalTax,
+            total_profit: totalProfit,
+            net_profit: netProfit,
+            profit_margin: profitMargin,
+            net_profit_margin: netProfitMargin
+          },
+          product_summary: productSummaryArray,
+          category_summary: categorySummaryArray
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching sales revenue details:', error);
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to fetch sales revenue details',
+        details: error.message 
+      });
+    }
+  },
+
+  // Get all categories for filtering
+  getAllCategories: async (req, res) => {
+    try {
+      const [rows] = await db.query('SELECT id, name FROM Category ORDER BY name');
+      res.json({ success: true, data: rows });
+    } catch (error) {
+      console.error('Error fetching categories:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch categories' });
+    }
+  },
+
+  // Get Gross Margin details
+  getGrossMarginDetails: async (req, res) => {
+    try {
+      const { period, start_date, end_date, category_id } = req.query;
+      
+      console.log('Gross Margin Details API called with:', { period, start_date, end_date, category_id });
+      
+      // Build date filter based on period
+      let dateFilter = '';
+      let params = [];
+      
+      if (period === 'custom' && start_date && end_date) {
+        dateFilter = 'AND so.order_date BETWEEN ? AND ?';
+        params = [start_date, end_date];
+      } else if (period === 'current_month') {
+        dateFilter = 'AND YEAR(so.order_date) = YEAR(CURDATE()) AND MONTH(so.order_date) = MONTH(CURDATE())';
+      } else if (period === 'last_month') {
+        dateFilter = 'AND YEAR(so.order_date) = YEAR(CURDATE() - INTERVAL 1 MONTH) AND MONTH(so.order_date) = MONTH(CURDATE() - INTERVAL 1 MONTH)';
+      } else if (period === 'current_year') {
+        dateFilter = 'AND YEAR(so.order_date) = YEAR(CURDATE())';
+      } else if (period === 'last_year') {
+        dateFilter = 'AND YEAR(so.order_date) = YEAR(CURDATE() - INTERVAL 1 YEAR)';
+      }
+      
+      // Build category filter
+      let categoryFilter = '';
+      if (category_id && category_id !== 'all') {
+        categoryFilter = 'AND p.category_id = ?';
+        params.push(category_id);
+      }
+      
+      console.log('Date filter:', dateFilter);
+      console.log('Category filter:', categoryFilter);
+      console.log('Params:', params);
+
+      // Query to get gross margin details from sales_order_items
+      const [rows] = await db.query(`
+        SELECT 
+          soi.id as item_id,
+          soi.sales_order_id,
+          so.so_number,
+          so.order_date,
+          c.name as customer_name,
+          p.product_name,
+          p.product_code,
+          p.cost_price,
+          soi.quantity,
+          soi.unit_price,
+          soi.total_price,
+          (soi.quantity * p.cost_price) as total_cost,
+          soi.tax_type,
+          soi.net_price,
+          soi.tax_amount,
+          cat.name as category_name
+        FROM sales_order_items soi
+        LEFT JOIN sales_orders so ON soi.sales_order_id = so.id
+        LEFT JOIN Clients c ON so.client_id = c.id
+        LEFT JOIN products p ON soi.product_id = p.id
+        LEFT JOIN Category cat ON p.category_id = cat.id
+        WHERE so.status = 'confirmed' 
+        ${dateFilter}
+        ${categoryFilter}
+        ORDER BY so.order_date DESC, so.id DESC, soi.id ASC
+      `, params);
+
+      console.log('Query executed successfully. Rows returned:', rows.length);
+      console.log('Sample row:', rows[0]);
+
+      // Calculate summary statistics
+      const totalItems = rows.length;
+      const totalQuantity = rows.reduce((sum, row) => sum + parseFloat(row.quantity), 0);
+      const totalCost = rows.reduce((sum, row) => sum + parseFloat(row.total_cost), 0);
+      const totalRevenue = rows.reduce((sum, row) => sum + parseFloat(row.total_price), 0);
+      const totalTax = rows.reduce((sum, row) => sum + parseFloat(row.tax_amount || 0), 0);
+      const totalProfit = totalRevenue - totalCost;
+      const netProfit = totalRevenue - totalCost - totalTax;
+      const profitMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
+      const netProfitMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
+
+      // Group by product for summary
+      const productSummary = {};
+      rows.forEach(row => {
+        const productKey = `${row.product_id}-${row.product_name}`;
+        if (!productSummary[productKey]) {
+          productSummary[productKey] = {
+            product_id: row.product_id,
+            product_name: row.product_name,
+            product_code: row.product_code,
+            cost_price: parseFloat(row.cost_price),
+            total_quantity: 0,
+            total_cost: 0,
+            total_revenue: 0,
+            total_profit: 0,
+            net_profit: 0,
+            tax_type: row.tax_type,
+            total_tax: 0,
+            first_sale_date: row.order_date,
+            last_sale_date: row.order_date
+          };
+        }
+        productSummary[productKey].total_quantity += parseFloat(row.quantity);
+        productSummary[productKey].total_cost += parseFloat(row.total_cost);
+        productSummary[productKey].total_revenue += parseFloat(row.total_price);
+        productSummary[productKey].total_profit += (parseFloat(row.total_price) - parseFloat(row.total_cost));
+        productSummary[productKey].total_tax += parseFloat(row.tax_amount || 0);
+        
+        // Calculate net profit (total_price - total_cost - total_tax)
+        const netProfit = parseFloat(row.total_price) - parseFloat(row.total_cost) - parseFloat(row.tax_amount || 0);
+        productSummary[productKey].net_profit = (productSummary[productKey].net_profit || 0) + netProfit;
+        
+        // Update first and last sale dates
+        if (new Date(row.order_date) < new Date(productSummary[productKey].first_sale_date)) {
+          productSummary[productKey].first_sale_date = row.order_date;
+        }
+        if (new Date(row.order_date) > new Date(productSummary[productKey].last_sale_date)) {
+          productSummary[productKey].last_sale_date = row.order_date;
+        }
+      });
+
+      const productSummaryArray = Object.values(productSummary).map(product => ({
+        ...product,
+        profit_margin: product.total_revenue > 0 ? (product.total_profit / product.total_revenue) * 100 : 0,
+        net_profit_margin: product.total_revenue > 0 ? (product.net_profit / product.total_revenue) * 100 : 0
+      }));
+
+      // Group by category for category summary
+      const categorySummary = {};
+      rows.forEach(row => {
+        const categoryKey = row.category_name || 'Uncategorized';
+        if (!categorySummary[categoryKey]) {
+          categorySummary[categoryKey] = {
+            category_name: categoryKey,
+            total_items: 0,
+            total_quantity: 0,
+            total_cost: 0,
+            total_revenue: 0,
+            total_profit: 0,
+            net_profit: 0,
+            total_tax: 0,
+            profit_margin: 0,
+            net_profit_margin: 0
+          };
+        }
+        categorySummary[categoryKey].total_items += 1;
+        categorySummary[categoryKey].total_quantity += parseFloat(row.quantity);
+        categorySummary[categoryKey].total_cost += parseFloat(row.total_cost);
+        categorySummary[categoryKey].total_revenue += parseFloat(row.total_price);
+        categorySummary[categoryKey].total_profit += (parseFloat(row.total_price) - parseFloat(row.total_cost));
+        categorySummary[categoryKey].total_tax += parseFloat(row.tax_amount || 0);
+        
+        // Calculate net profit (total_price - total_cost - total_tax)
+        const netProfit = parseFloat(row.total_price) - parseFloat(row.total_cost) - parseFloat(row.tax_amount || 0);
+        categorySummary[categoryKey].net_profit += netProfit;
+      });
+
+      const categorySummaryArray = Object.values(categorySummary).map(category => ({
+        ...category,
+        profit_margin: category.total_revenue > 0 ? (category.total_profit / category.total_revenue) * 100 : 0,
+        net_profit_margin: category.total_revenue > 0 ? (category.net_profit / category.total_revenue) * 100 : 0
+      }));
+
+      res.json({ 
+        success: true, 
+        data: {
+          items: rows,
+          summary: {
+            total_items: totalItems,
+            total_quantity: totalQuantity,
+            total_cost: totalCost,
+            total_revenue: totalRevenue,
+            total_tax: totalTax,
+            total_profit: totalProfit,
+            net_profit: netProfit,
+            profit_margin: profitMargin,
+            net_profit_margin: netProfitMargin
+          },
+          product_summary: productSummaryArray,
+          category_summary: categorySummaryArray
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching gross margin details:', error);
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to fetch gross margin details',
+        details: error.message 
+      });
     }
   }
 };

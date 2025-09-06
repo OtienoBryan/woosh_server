@@ -5,7 +5,7 @@ const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 // Try to require database and other modules, but don't crash if they fail
-let db, staffController, roleController, multer, upload, uploadController, teamController, clientController, branchController, serviceChargeController, journeyPlanController, payrollRoutes, financialRoutes, staffRoutes, chatRoutes, clientRoutes, salesRoutes, managerRoutes, noticeRoutes, salesRepLeaveRoutes, calendarTaskRoutes, userRoutes, loginHistoryRoutes, journeyPlanRoutes, riderRoutes, myVisibilityReportRoutes, feedbackReportRoutes, availabilityReportRoutes, leaveRequestRoutes, supplierRoutes, receiptRoutes, myAssetsRoutes, faultyProductsRoutes, storeRoutes, authRoutes;
+let db, staffController, roleController, multer, upload, uploadController, teamController, clientController, branchController, serviceChargeController, journeyPlanController, payrollRoutes, financialRoutes, staffRoutes, chatRoutes, clientRoutes, salesRoutes, managerRoutes, noticeRoutes, salesRepLeaveRoutes, calendarTaskRoutes, userRoutes, loginHistoryRoutes, journeyPlanRoutes, riderRoutes, myVisibilityReportRoutes, feedbackReportRoutes, availabilityReportRoutes, leaveRequestRoutes, supplierRoutes, receiptRoutes, myAssetsRoutes, faultyProductsRoutes, storeRoutes, authRoutes, routesRoutes;
 
 try {
   db = require('../database/db');
@@ -43,6 +43,7 @@ try {
   faultyProductsRoutes = require('../routes/faultyProductsRoutes');
   storeRoutes = require('../routes/storeRoutes');
   authRoutes = require('../routes/authRoutes');
+  routesRoutes = require('../routes/routesRoutes');
 } catch (error) {
   console.log('Some modules failed to load:', error.message);
 }
@@ -140,6 +141,7 @@ if (authRoutes) {
 }
 if (financialRoutes) app.use('/api/financial', financialRoutes);
 if (staffRoutes) app.use('/api/staff', staffRoutes);
+if (routesRoutes) app.use('/api/routes', routesRoutes);
 if (clientRoutes) app.use('/api/clients', clientRoutes);
 if (salesRoutes) app.use('/api/sales', salesRoutes);
 if (managerRoutes) app.use('/api/managers', managerRoutes);

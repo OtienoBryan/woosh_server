@@ -32,8 +32,9 @@ async function addStockRole() {
         department_email, 
         salary, 
         employment_type,
+        gender,
         password
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       'Stock Manager',
       'https://randomuser.me/api/portraits/men/10.jpg',
@@ -46,6 +47,7 @@ async function addStockRole() {
       'inventory@company.com',
       45000.00,
       'Consultant',
+      'Male',
       hashedPassword
     ]);
 

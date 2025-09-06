@@ -581,6 +581,107 @@ const dashboardController = {
       console.error('Error fetching dashboard stats:', error);
       res.status(500).json({ success: false, error: 'Failed to fetch dashboard statistics' });
     }
+  },
+
+  // Get executive dashboard statistics
+  getExecutiveDashboardStats: async (req, res) => {
+    try {
+      // Get comprehensive financial data
+      const [salesResult] = await db.query(`
+        SELECT COALESCE(SUM(total_amount), 0) as totalSales 
+        FROM sales_orders 
+        WHERE status IN ('delivered', 'confirmed', 'shipped')
+      `);
+      
+      const [purchasesResult] = await db.query(`
+        SELECT COALESCE(SUM(total_amount), 0) as totalPurchases 
+        FROM purchase_orders 
+        WHERE status IN ('received', 'sent')
+      `);
+      
+      const [receivablesResult] = await db.query(`
+        SELECT COALESCE(SUM(debit - credit), 0) as totalReceivables
+        FROM client_ledger
+      `);
+      
+      const [payablesResult] = await db.query(`
+        SELECT COALESCE(SUM(credit - debit), 0) as totalPayables
+        FROM supplier_ledger
+      `);
+      
+      // Get customer count
+      const [customersResult] = await db.query(`
+        SELECT COUNT(*) as totalCustomers FROM customers WHERE is_active = true
+      `);
+      
+      // Get total orders count
+      const [ordersResult] = await db.query(`
+        SELECT COUNT(*) as totalOrders FROM sales_orders
+      `);
+      
+      // Get pending orders count
+      const [pendingOrdersResult] = await db.query(`
+        SELECT COUNT(*) as pendingOrders
+        FROM sales_orders 
+        WHERE my_status = 0 OR my_status = '0'
+      `);
+      
+      // Get staff count
+      const [staffResult] = await db.query(`
+        SELECT COUNT(*) as totalStaff FROM staff
+      `);
+      
+      // Get active staff count
+      const [activeStaffResult] = await db.query(`
+        SELECT COUNT(*) as activeStaff FROM staff WHERE is_active = true OR is_active IS NULL
+      `);
+      
+      // Get total assets
+      const [assetsResult] = await db.query(`
+        SELECT COALESCE(SUM(purchase_value), 0) as totalAssets FROM assets
+      `);
+      
+      // Calculate monthly growth (simplified - comparing current month to previous month)
+      const [currentMonthSales] = await db.query(`
+        SELECT COALESCE(SUM(total_amount), 0) as currentMonthSales
+        FROM sales_orders 
+        WHERE status IN ('delivered', 'confirmed', 'shipped')
+        AND MONTH(order_date) = MONTH(CURDATE()) 
+        AND YEAR(order_date) = YEAR(CURDATE())
+      `);
+      
+      const [previousMonthSales] = await db.query(`
+        SELECT COALESCE(SUM(total_amount), 0) as previousMonthSales
+        FROM sales_orders 
+        WHERE status IN ('delivered', 'confirmed', 'shipped')
+        AND MONTH(order_date) = MONTH(CURDATE()) - 1 
+        AND YEAR(order_date) = YEAR(CURDATE())
+      `);
+      
+      const currentSales = currentMonthSales[0].currentMonthSales;
+      const previousSales = previousMonthSales[0].previousMonthSales;
+      const monthlyGrowth = previousSales > 0 ? 
+        ((currentSales - previousSales) / previousSales) * 100 : 0;
+      
+      const stats = {
+        totalSales: salesResult[0].totalSales,
+        totalPurchases: purchasesResult[0].totalPurchases,
+        totalReceivables: receivablesResult[0].totalReceivables,
+        totalPayables: payablesResult[0].totalPayables,
+        totalCustomers: customersResult[0].totalCustomers,
+        totalOrders: ordersResult[0].totalOrders,
+        pendingOrders: pendingOrdersResult[0].pendingOrders,
+        totalStaff: staffResult[0].totalStaff,
+        activeStaff: activeStaffResult[0].activeStaff,
+        totalAssets: assetsResult[0].totalAssets,
+        monthlyGrowth: Math.round(monthlyGrowth * 100) / 100
+      };
+      
+      res.json({ success: true, data: stats });
+    } catch (error) {
+      console.error('Error fetching executive dashboard stats:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch executive dashboard statistics' });
+    }
   }
 };
 
@@ -1805,7 +1906,7 @@ const createProduct = async (req, res) => {
 // Get all sales reps
 const getSalesReps = async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT id, name, email, phoneNumber FROM SalesRep ORDER BY name');
+    const [rows] = await db.query('SELECT id, name, email, phoneNumber FROM SalesRep WHERE status = 1 ORDER BY name');
     res.json({ success: true, data: rows });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Failed to fetch sales reps' });

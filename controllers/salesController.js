@@ -741,6 +741,52 @@ exports.getMasterSalesCategories = async (req, res) => {
   }
 };
 
+// Get detailed sales data for a specific client and month
+exports.getClientMonthDetails = async (req, res) => {
+  try {
+    const { clientId, month, year } = req.query;
+    
+    if (!clientId || !month || !year) {
+      return res.status(400).json({ error: 'Client ID, month, and year are required' });
+    }
+
+    const [rows] = await db.query(`
+      SELECT 
+        so.id as order_id,
+        so.order_date,
+        so.id as order_number,
+        so.total_amount as order_total,
+        so.status as order_status,
+        so.created_at as order_created_at,
+        c.name as client_name,
+        c.contact as client_phone,
+        c.email as client_email,
+        p.product_name,
+        soi.quantity,
+        soi.unit_price,
+        (soi.quantity * soi.unit_price) as line_total,
+        cat.name as category_name,
+        sr.name as sales_rep_name
+      FROM sales_orders so
+      JOIN Clients c ON so.client_id = c.id
+      JOIN sales_order_items soi ON so.id = soi.sales_order_id
+      JOIN products p ON soi.product_id = p.id
+      LEFT JOIN Category cat ON p.category_id = cat.id
+      LEFT JOIN SalesRep sr ON c.route_id_update = sr.route_id_update
+      WHERE so.client_id = ? 
+        AND MONTH(so.order_date) = ? 
+        AND YEAR(so.order_date) = ?
+        AND so.my_status = 1
+      ORDER BY so.order_date DESC, so.id DESC, p.product_name
+    `, [clientId, month, year]);
+
+    res.json(rows);
+  } catch (err) {
+    console.error('Error fetching client month details:', err);
+    res.status(500).json({ error: 'Failed to fetch client month details', details: err.message });
+  }
+};
+
 // Get available sales reps for master sales filter
 exports.getMasterSalesSalesReps = async (req, res) => {
   try {

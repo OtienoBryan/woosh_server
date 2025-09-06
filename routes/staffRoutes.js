@@ -13,7 +13,7 @@ const calendarTaskController = require('../controllers/calendarTaskController');
 router.get('/staff', staffController.getAllStaff);
 router.get('/staff/:id', staffController.getStaffById);
 router.post('/staff', staffController.createStaff);
-router.put('/staff/:id', staffController.editStaff);
+router.put('/staff/:id', staffController.updateStaff);
 router.delete('/staff/:id', staffController.deleteStaff);
 router.patch('/staff/:id/status', staffController.updateStaffStatus);
 router.patch('/staff/:id/deactivate', staffController.deactivateStaff);
@@ -28,6 +28,9 @@ router.post('/documents', upload.single('file'), documentController.uploadDocume
 
 // List documents
 router.get('/documents', documentController.getAllDocuments);
+
+// Delete document
+router.delete('/documents/:id', documentController.deleteDocument);
 
 // Employee contract routes
 router.post('/staff/:id/contracts', upload.single('file'), staffController.uploadContract);
@@ -65,8 +68,11 @@ router.patch('/departments/:id/deactivate', departmentController.deactivateDepar
 // Attendance routes
 router.get('/attendance/today', attendanceController.getTodayAttendance);
 router.get('/attendance', attendanceController.getAllAttendance);
+router.get('/attendance/monthly-count', attendanceController.getMonthlyRecordCount);
+router.post('/attendance', attendanceController.createAttendance);
 router.post('/attendance/checkin', attendanceController.checkIn);
 router.post('/attendance/checkout', attendanceController.checkOut);
+router.put('/attendance/:id', attendanceController.updateAttendance);
 
 // GET /api/employee-working-hours
 router.get('/employee-working-hours', staffController.getEmployeeWorkingHours);

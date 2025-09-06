@@ -115,6 +115,7 @@ router.get('/products/low-stock', productsController.getLowStockProducts);
 
 // Dashboard Routes
 router.get('/dashboard/stats', dashboardController.getDashboardStats);
+router.get('/dashboard/executive-stats', dashboardController.getExecutiveDashboardStats);
 
 // Purchase Orders Routes
 router.get('/purchase-orders', purchaseOrderController.getAllPurchaseOrders);
@@ -255,6 +256,10 @@ router.get('/reports/profit-loss', reportsController.getProfitLossReport);
 router.get('/reports/balance-sheet', reportsController.getBalanceSheetReport);
 router.get('/reports/cash-flow', reportsController.getCashFlowReport);
 router.get('/reports/product-performance', reportsController.getProductPerformanceReport);
+router.get('/reports/cost-of-goods-sold-details', reportsController.getCostOfGoodsSoldDetails);
+router.get('/reports/sales-revenue-details', reportsController.getSalesRevenueDetails);
+router.get('/reports/gross-margin-details', reportsController.getGrossMarginDetails);
+router.get('/reports/categories', reportsController.getAllCategories);
 router.get('/products-sale-report', getProductsSaleReport);
 router.get('/journal-entry-lines/:account_id', reportsController.getJournalEntriesForAccount);
 router.get('/journal-entries/invoice/:invoice_id', reportsController.getJournalEntriesForInvoice);

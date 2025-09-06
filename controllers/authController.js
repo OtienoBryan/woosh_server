@@ -39,6 +39,7 @@ const login = async (req, res) => {
       { expiresIn: '24h' }
     );
 
+    console.log('Login successful for user:', user.name, 'with role:', user.role);
     res.json({
       token,
       user: {

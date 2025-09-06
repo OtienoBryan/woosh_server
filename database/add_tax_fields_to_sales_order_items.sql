@@ -23,3 +23,6 @@ MODIFY COLUMN net_price DECIMAL(15,2) DEFAULT 0.00 COMMENT 'Net price (quantity 
 
 
 
+
+
+

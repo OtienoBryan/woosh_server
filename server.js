@@ -12,7 +12,7 @@ process.env.TZ = 'UTC';
 process.env.NODE_TZ = 'UTC';
 
 // Try to require database and other modules, but don't crash if they fail
-let db, staffController, roleController, multer, upload, uploadController, teamController, clientController, branchController, serviceChargeController, journeyPlanController, payrollRoutes, financialRoutes, staffRoutes, chatRoutes, clientRoutes, salesRoutes, managerRoutes, noticeRoutes, salesRepLeaveRoutes, calendarTaskRoutes, userRoutes, loginHistoryRoutes, journeyPlanRoutes, riderRoutes, myVisibilityReportRoutes, feedbackReportRoutes, availabilityReportRoutes, leaveRequestRoutes, supplierRoutes, receiptRoutes, myAssetsRoutes, faultyProductsRoutes, storeRoutes;
+let db, staffController, roleController, multer, upload, uploadController, teamController, clientController, branchController, serviceChargeController, journeyPlanController, payrollRoutes, financialRoutes, staffRoutes, chatRoutes, clientRoutes, salesRoutes, managerRoutes, noticeRoutes, salesRepLeaveRoutes, calendarTaskRoutes, userRoutes, loginHistoryRoutes, journeyPlanRoutes, riderRoutes, myVisibilityReportRoutes, feedbackReportRoutes, availabilityReportRoutes, leaveRequestRoutes, supplierRoutes, receiptRoutes, myAssetsRoutes, faultyProductsRoutes, storeRoutes, routesRoutes;
 
 try {
   db = require('./database/db');
@@ -54,6 +54,7 @@ try {
   assetAssignmentRoutes = require('./routes/assetAssignmentRoutes');
   merchandiseRoutes = require('./routes/merchandiseRoutes');
   clientAssignmentRoutes = require('./routes/clientAssignmentRoutes');
+  routesRoutes = require('./routes/routesRoutes');
 } catch (error) {
   console.log('Some modules failed to load:', error.message);
 }
@@ -440,12 +441,28 @@ app.patch('/api/staff/:id/status', staffController.updateStaffStatus);
 // Roles routes
 app.get('/api/roles', roleController.getAllRoles);
 
+// Outlet accounts routes
+app.get('/api/outlet-accounts', async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT * FROM outlet_accounts ORDER BY name ASC');
+    res.json(rows);
+  } catch (error) {
+    console.error('Error fetching outlet accounts:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
 // Upload routes
 app.post('/api/upload', upload.single('photo'), uploadController.uploadImage);
 
 // Team routes
 app.post('/api/teams', teamController.createTeam);
 app.get('/api/teams', teamController.getTeams);
+
+// Routes routes (must be registered before generic client routes to avoid conflict)
+if (routesRoutes) {
+  app.use('/api/routes', routesRoutes);
+}
 
 // Client routes
 app.use('/api/clients', clientRoutes);
@@ -490,9 +507,10 @@ app.use('/api/my-assets', myAssetsRoutes);
   app.use('/api/stores', storeRoutes);
   app.use('/api/asset-assignments', assetAssignmentRoutes);
   app.use('/api/merchandise', merchandiseRoutes);
-app.use('/api', clientRoutes);
+
 app.use('/api/sales-rep-leaves', salesRepLeaveRoutes);
 app.use('/api/calendar-tasks', calendarTaskRoutes);
+app.use('/api/tasks', require('./routes/tasksRoutes'));
 app.use('/api/users', userRoutes);
 
 // Visibility Reports route
@@ -801,6 +819,7 @@ app.get('/api/sales-reps', async (req, res) => {
       SELECT DISTINCT u.id, u.name
       FROM SalesRep u
       INNER JOIN VisibilityReport vr ON vr.userId = u.id
+      WHERE u.status = 1
       ORDER BY u.name ASC
     `;
     
@@ -1108,6 +1127,7 @@ app.get('/api/feedback-sales-reps', async (req, res) => {
       SELECT DISTINCT u.id, u.name
       FROM SalesRep u
       INNER JOIN FeedbackReport fr ON fr.userId = u.id
+      WHERE u.status = 1
       ORDER BY u.name ASC
     `;
     
@@ -1320,6 +1340,7 @@ app.get('/api/availability-sales-reps', async (req, res) => {
       SELECT DISTINCT u.name
       FROM SalesRep u
       INNER JOIN ProductReport pr ON pr.userId = u.id
+      WHERE u.status = 1
       ORDER BY u.name ASC
     `;
     

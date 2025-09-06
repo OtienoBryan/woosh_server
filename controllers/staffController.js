@@ -22,7 +22,14 @@ const staffController = {
       if (!staff || staff.length === 0) {
         return res.json([]);
       }
-      res.json(staff);
+      
+      // Map is_active to status for frontend compatibility
+      const staffWithStatus = staff.map(member => ({
+        ...member,
+        status: member.is_active ? 1 : 0
+      }));
+      
+      res.json(staffWithStatus);
     } catch (error) {
       res.status(500).json({ message: 'Error fetching staff list', error: error.message });
     }
@@ -66,12 +73,12 @@ const staffController = {
   },
 
   createStaff: async (req, res) => {
-    const { name, photo_url, empl_no, id_no, role, phone_number, department, business_email, department_email, salary, employment_type } = req.body;
+    const { name, photo_url, empl_no, id_no, role, phone_number, department, business_email, department_email, salary, employment_type, gender } = req.body;
     
     try {
       const [result] = await db.query(
-        'INSERT INTO staff (name, photo_url, empl_no, id_no, role, phone_number, department, business_email, department_email, salary, employment_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [name, photo_url, empl_no, id_no, role, phone_number, department, business_email, department_email, salary, employment_type]
+        'INSERT INTO staff (name, photo_url, empl_no, id_no, role, phone_number, department, business_email, department_email, salary, employment_type, gender) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [name, photo_url, empl_no, id_no, role, phone_number, department, business_email, department_email, salary, employment_type, gender]
       );
       res.status(201).json({
         id: result.insertId,
@@ -85,7 +92,8 @@ const staffController = {
         business_email,
         department_email,
         salary,
-        employment_type
+        employment_type,
+        gender
       });
     } catch (error) {
       console.error('Error creating staff member:', error);
@@ -94,12 +102,12 @@ const staffController = {
   },
 
   updateStaff: async (req, res) => {
-    const { name, photo_url, empl_no, id_no, role, phone_number, department, business_email, department_email, salary, employment_type } = req.body;
+    const { name, photo_url, empl_no, id_no, role, phone_number, department, business_email, department_email, salary, employment_type, gender } = req.body;
     
     try {
       await db.query(
-        'UPDATE staff SET name = ?, photo_url = ?, empl_no = ?, id_no = ?, role = ?, phone_number = ?, department = ?, business_email = ?, department_email = ?, salary = ?, employment_type = ? WHERE id = ?',
-        [name, photo_url, empl_no, id_no, role, phone_number, department, business_email, department_email, salary, employment_type, req.params.id]
+        'UPDATE staff SET name = ?, photo_url = ?, empl_no = ?, id_no = ?, role = ?, phone_number = ?, department = ?, business_email = ?, department_email = ?, salary = ?, employment_type = ?, gender = ? WHERE id = ?',
+        [name, photo_url, empl_no, id_no, role, phone_number, department, business_email, department_email, salary, employment_type, gender, req.params.id]
       );
       res.json({
         id: parseInt(req.params.id),
@@ -113,7 +121,8 @@ const staffController = {
         business_email,
         department_email,
         salary,
-        employment_type
+        employment_type,
+        gender
       });
     } catch (error) {
       console.error('Error updating staff member:', error);
@@ -145,17 +154,26 @@ const staffController = {
         return res.status(404).json({ message: 'Staff member not found' });
       }
       
-      // Update the status
+      // Convert status (0/1) to is_active (false/true)
+      const isActive = status === 1;
+      
+      // Update the is_active field
       await db.query(
-        'UPDATE staff SET status = ? WHERE id = ?',
-        [status, staffId]
+        'UPDATE staff SET is_active = ? WHERE id = ?',
+        [isActive, staffId]
       );
       
       // Get the updated staff record
       const [updatedStaff] = await db.query('SELECT * FROM staff WHERE id = ?', [staffId]);
       
-      console.log('Staff status updated successfully:', updatedStaff[0]);
-      res.json(updatedStaff[0]);
+      // Map is_active back to status for frontend compatibility
+      const staffWithStatus = {
+        ...updatedStaff[0],
+        status: updatedStaff[0].is_active ? 1 : 0
+      };
+      
+      console.log('Staff status updated successfully:', staffWithStatus);
+      res.json(staffWithStatus);
     } catch (error) {
       console.error('Error updating staff status:', error);
       res.status(500).json({ 
@@ -191,16 +209,59 @@ const staffController = {
     console.log('Received file:', req.file);
     console.log('Request body:', req.body);
     if (!req.file) return res.status(400).json({ message: 'No file uploaded', file: req.file, body: req.body });
-    const { originalname, path: filePath } = req.file;
+    
+    const { originalname, buffer, mimetype } = req.file;
     const { description } = req.body;
+    
     try {
-      // Upload to Cloudinary
-      const result = await cloudinary.uploader.upload(filePath, {
-        folder: 'employee_documents',
-        resource_type: 'auto',
-        public_id: `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_'),
-      });
-      const fileUrl = result.secure_url;
+      // Check if Cloudinary is properly configured
+      const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+      const apiKey = process.env.CLOUDINARY_API_KEY;
+      const apiSecret = process.env.CLOUDINARY_API_SECRET;
+      const fileStorageType = process.env.FILE_STORAGE_TYPE || 'cloudinary';
+      
+      let fileUrl;
+      
+      if (fileStorageType === 'local' || !cloudName || !apiKey || !apiSecret) {
+        // Use local file storage
+        console.log('Using local file storage for document...');
+        const fs = require('fs');
+        const path = require('path');
+        
+        // Create uploads directory if it doesn't exist
+        const uploadsDir = path.join(__dirname, '../uploads/documents');
+        if (!fs.existsSync(uploadsDir)) {
+          fs.mkdirSync(uploadsDir, { recursive: true });
+        }
+        
+        // Generate unique filename
+        const timestamp = Date.now();
+        const sanitizedName = originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+        const filename = `${staffId}_${timestamp}_${sanitizedName}`;
+        const filePath = path.join(uploadsDir, filename);
+        
+        // Save file locally
+        fs.writeFileSync(filePath, buffer);
+        
+        // Create URL for local file
+        fileUrl = `/uploads/documents/${filename}`;
+        console.log('Local document saved:', filePath);
+      } else {
+        // Use Cloudinary
+        console.log('Using Cloudinary upload for document...');
+        
+        // Convert buffer to base64 for Cloudinary
+        const b64 = Buffer.from(buffer).toString('base64');
+        const dataURI = `data:${mimetype};base64,${b64}`;
+        
+        const result = await cloudinary.uploader.upload(dataURI, {
+          folder: 'employee_documents',
+          resource_type: 'auto',
+          public_id: `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_'),
+        });
+        fileUrl = result.secure_url;
+      }
+      
       await db.query(
         'INSERT INTO employee_documents (staff_id, file_name, file_url, description) VALUES (?, ?, ?, ?)',
         [staffId, originalname, fileUrl, description || null]
@@ -208,7 +269,7 @@ const staffController = {
 
       res.status(201).json({ message: 'Document uploaded', file_url: fileUrl });
     } catch (error) {
-      console.error('Cloudinary upload error:', error);
+      console.error('Document upload error:', error);
       res.status(500).json({ message: 'Failed to upload document', error: error.message });
     }
   },
@@ -250,7 +311,7 @@ const staffController = {
     const { originalname, buffer, mimetype } = req.file;
     const { start_date, end_date, renewed_from } = req.body;
     
-    console.log('File details:', { originalname, path: filePath });
+    console.log('File details:', { originalname, mimetype });
     console.log('Form data:', { start_date, end_date, renewed_from });
     
     try {
@@ -258,29 +319,58 @@ const staffController = {
       const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
       const apiKey = process.env.CLOUDINARY_API_KEY;
       const apiSecret = process.env.CLOUDINARY_API_SECRET;
+      const fileStorageType = process.env.FILE_STORAGE_TYPE || 'cloudinary';
       
-      console.log('Cloudinary config check:');
+      console.log('File storage config check:');
+      console.log('- Storage type:', fileStorageType);
       console.log('- Cloud name:', cloudName ? 'SET' : 'NOT SET');
       console.log('- API key:', apiKey ? 'SET' : 'NOT SET');
       console.log('- API secret:', apiSecret ? 'SET' : 'NOT SET');
       
       let fileUrl;
       
-      // Convert buffer to base64 for Cloudinary
-      const b64 = Buffer.from(buffer).toString('base64');
-      const dataURI = `data:${mimetype};base64,${b64}`;
-      
-      // Upload to Cloudinary
-      console.log('Using Cloudinary upload...');
-      const result = await cloudinary.uploader.upload(dataURI, {
-        folder: 'employee_contracts',
-        resource_type: 'auto',
-        public_id: `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_'),
-      });
-      
-      console.log('Cloudinary upload successful:', result);
-      fileUrl = result.secure_url;
-      console.log('Cloudinary upload successful:', result);
+      if (fileStorageType === 'local' || !cloudName || !apiKey || !apiSecret) {
+        // Use local file storage
+        console.log('Using local file storage...');
+        const fs = require('fs');
+        const path = require('path');
+        
+        // Create uploads directory if it doesn't exist
+        const uploadsDir = path.join(__dirname, '../uploads/contracts');
+        if (!fs.existsSync(uploadsDir)) {
+          fs.mkdirSync(uploadsDir, { recursive: true });
+        }
+        
+        // Generate unique filename
+        const timestamp = Date.now();
+        const sanitizedName = originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+        const filename = `${staffId}_${timestamp}_${sanitizedName}`;
+        const filePath = path.join(uploadsDir, filename);
+        
+        // Save file locally
+        fs.writeFileSync(filePath, buffer);
+        
+        // Create URL for local file
+        fileUrl = `/uploads/contracts/${filename}`;
+        console.log('Local file saved:', filePath);
+        console.log('File URL:', fileUrl);
+      } else {
+        // Use Cloudinary
+        console.log('Using Cloudinary upload...');
+        
+        // Convert buffer to base64 for Cloudinary
+        const b64 = Buffer.from(buffer).toString('base64');
+        const dataURI = `data:${mimetype};base64,${b64}`;
+        
+        const result = await cloudinary.uploader.upload(dataURI, {
+          folder: 'employee_contracts',
+          resource_type: 'auto',
+          public_id: `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_'),
+        });
+        
+        console.log('Cloudinary upload successful:', result);
+        fileUrl = result.secure_url;
+      }
       
       console.log('Saving to database...');
       const [dbResult] = await db.query(
@@ -358,7 +448,7 @@ const staffController = {
     const { originalname, buffer, mimetype } = req.file;
     const { termination_date } = req.body;
     
-    console.log('File details:', { originalname, path: filePath });
+    console.log('File details:', { originalname, mimetype });
     console.log('Form data:', { termination_date });
     
     if (!termination_date) {
@@ -371,28 +461,57 @@ const staffController = {
       const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
       const apiKey = process.env.CLOUDINARY_API_KEY;
       const apiSecret = process.env.CLOUDINARY_API_SECRET;
+      const fileStorageType = process.env.FILE_STORAGE_TYPE || 'cloudinary';
       
-      console.log('Cloudinary config check:');
+      console.log('File storage config check:');
+      console.log('- Storage type:', fileStorageType);
       console.log('- Cloud name:', cloudName ? 'SET' : 'NOT SET');
       console.log('- API key:', apiKey ? 'SET' : 'NOT SET');
       console.log('- API secret:', apiSecret ? 'SET' : 'NOT SET');
       
       let fileUrl;
       
-      // Convert buffer to base64 for Cloudinary
-      const b64 = Buffer.from(buffer).toString('base64');
-      const dataURI = `data:${mimetype};base64,${b64}`;
-      
-      // Upload to Cloudinary
-      console.log('Using Cloudinary upload...');
-      const result = await cloudinary.uploader.upload(dataURI, {
-        folder: 'termination_letters',
-        resource_type: 'auto',
-        public_id: `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_'),
-      });
-      
-      console.log('Cloudinary upload successful:', result);
-      fileUrl = result.secure_url;
+      if (fileStorageType === 'local' || !cloudName || !apiKey || !apiSecret) {
+        // Use local file storage
+        console.log('Using local file storage for termination letter...');
+        const fs = require('fs');
+        const path = require('path');
+        
+        // Create uploads directory if it doesn't exist
+        const uploadsDir = path.join(__dirname, '../uploads/termination_letters');
+        if (!fs.existsSync(uploadsDir)) {
+          fs.mkdirSync(uploadsDir, { recursive: true });
+        }
+        
+        // Generate unique filename
+        const timestamp = Date.now();
+        const sanitizedName = originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+        const filename = `${staffId}_${timestamp}_${sanitizedName}`;
+        const filePath = path.join(uploadsDir, filename);
+        
+        // Save file locally
+        fs.writeFileSync(filePath, buffer);
+        
+        // Create URL for local file
+        fileUrl = `/uploads/termination_letters/${filename}`;
+        console.log('Local termination letter saved:', filePath);
+      } else {
+        // Use Cloudinary
+        console.log('Using Cloudinary upload for termination letter...');
+        
+        // Convert buffer to base64 for Cloudinary
+        const b64 = Buffer.from(buffer).toString('base64');
+        const dataURI = `data:${mimetype};base64,${b64}`;
+        
+        const result = await cloudinary.uploader.upload(dataURI, {
+          folder: 'termination_letters',
+          resource_type: 'auto',
+          public_id: `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_'),
+        });
+        
+        console.log('Cloudinary upload successful:', result);
+        fileUrl = result.secure_url;
+      }
       
       console.log('Saving to database...');
       const [dbResult] = await db.query(
@@ -455,7 +574,7 @@ const staffController = {
     const { originalname, buffer, mimetype } = req.file;
     const { warning_date, warning_type, description } = req.body;
     
-    console.log('File details:', { originalname, path: filePath });
+    console.log('File details:', { originalname, mimetype });
     console.log('Form data:', { warning_date, warning_type, description });
     
     if (!warning_date || !warning_type) {
@@ -468,28 +587,57 @@ const staffController = {
       const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
       const apiKey = process.env.CLOUDINARY_API_KEY;
       const apiSecret = process.env.CLOUDINARY_API_SECRET;
+      const fileStorageType = process.env.FILE_STORAGE_TYPE || 'cloudinary';
       
-      console.log('Cloudinary config check:');
+      console.log('File storage config check:');
+      console.log('- Storage type:', fileStorageType);
       console.log('- Cloud name:', cloudName ? 'SET' : 'NOT SET');
       console.log('- API key:', apiKey ? 'SET' : 'NOT SET');
       console.log('- API secret:', apiSecret ? 'SET' : 'NOT SET');
       
       let fileUrl;
       
-      // Convert buffer to base64 for Cloudinary
-      const b64 = Buffer.from(buffer).toString('base64');
-      const dataURI = `data:${mimetype};base64,${b64}`;
-      
-      // Upload to Cloudinary
-      console.log('Using Cloudinary upload...');
-      const result = await cloudinary.uploader.upload(dataURI, {
-        folder: 'warning_letters',
-        resource_type: 'auto',
-        public_id: `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_'),
-      });
-      
-      console.log('Cloudinary upload successful:', result);
-      fileUrl = result.secure_url;
+      if (fileStorageType === 'local' || !cloudName || !apiKey || !apiSecret) {
+        // Use local file storage
+        console.log('Using local file storage for warning letter...');
+        const fs = require('fs');
+        const path = require('path');
+        
+        // Create uploads directory if it doesn't exist
+        const uploadsDir = path.join(__dirname, '../uploads/warning_letters');
+        if (!fs.existsSync(uploadsDir)) {
+          fs.mkdirSync(uploadsDir, { recursive: true });
+        }
+        
+        // Generate unique filename
+        const timestamp = Date.now();
+        const sanitizedName = originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+        const filename = `${staffId}_${timestamp}_${sanitizedName}`;
+        const filePath = path.join(uploadsDir, filename);
+        
+        // Save file locally
+        fs.writeFileSync(filePath, buffer);
+        
+        // Create URL for local file
+        fileUrl = `/uploads/warning_letters/${filename}`;
+        console.log('Local warning letter saved:', filePath);
+      } else {
+        // Use Cloudinary
+        console.log('Using Cloudinary upload for warning letter...');
+        
+        // Convert buffer to base64 for Cloudinary
+        const b64 = Buffer.from(buffer).toString('base64');
+        const dataURI = `data:${mimetype};base64,${b64}`;
+        
+        const result = await cloudinary.uploader.upload(dataURI, {
+          folder: 'warning_letters',
+          resource_type: 'auto',
+          public_id: `${staffId}_${Date.now()}_${originalname}`.replace(/\s+/g, '_'),
+        });
+        
+        console.log('Cloudinary upload successful:', result);
+        fileUrl = result.secure_url;
+      }
       
       console.log('Saving to database...');
       const [dbResult] = await db.query(
@@ -752,7 +900,7 @@ const staffController = {
         params.push(end_date);
       }
       const [rows] = await db.query(`
-        SELECT o.id, s.name AS staff_name, o.date, o.reason, o.comment, o.status
+        SELECT o.id, o.staff_id, s.name AS staff_name, s.role AS staff_role, s.photo_url, o.date, o.reason, o.comment, o.status, o.created_at, o.updated_at, o.approved_by, o.approved_at
         FROM out_of_office_requests o
         LEFT JOIN staff s ON o.staff_id = s.id
         ${where}

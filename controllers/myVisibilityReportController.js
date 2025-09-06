@@ -1,6 +1,6 @@
 console.log('=== MY VISIBILITY REPORT CONTROLLER IS LOADING ===');
 
-const db = require('../database/db');
+const db = require('../config/database');
 
 // Fetch all my visibility reports with client outlet names
 exports.getAllMyVisibilityReports = async (req, res) => {
@@ -10,9 +10,13 @@ exports.getAllMyVisibilityReports = async (req, res) => {
       SELECT 
         vr.*,
         c.name as outletName,
-        c.company_name as companyName
+        c.name as companyName,
+        co.name as country,
+        sr.name as salesRep
       FROM VisibilityReport vr
       LEFT JOIN Clients c ON vr.clientId = c.id
+      LEFT JOIN Country co ON c.countryId = co.id
+      LEFT JOIN SalesRep sr ON vr.userId = sr.id
       ORDER BY vr.createdAt DESC
     `;
     const [results] = await db.query(sql);

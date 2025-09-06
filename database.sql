@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS staff (
   department_email VARCHAR(255),
   salary DECIMAL(12,2),
   employment_type ENUM('Permanent', 'Contract'),
+  gender ENUM('Male', 'Female', 'Other') NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
@@ -101,11 +102,11 @@ INSERT INTO service_types (name, description) VALUES
 ON DUPLICATE KEY UPDATE id=id;
 
 -- Insert initial staff data
-INSERT INTO staff (name, photo_url, empl_no, id_no, role) VALUES 
-('John Doe', 'https://randomuser.me/api/portraits/men/1.jpg', 'EMP001', '12345678', 'Senior Developer'),
-('Jane Smith', 'https://randomuser.me/api/portraits/women/1.jpg', 'EMP002', '23456789', 'Project Manager'),
-('Mike Johnson', 'https://randomuser.me/api/portraits/men/2.jpg', 'EMP003', '34567890', 'UI Designer'),
-('Sarah Williams', 'https://randomuser.me/api/portraits/women/2.jpg', 'EMP004', '45678901', 'QA Engineer')
+INSERT INTO staff (name, photo_url, empl_no, id_no, role, gender) VALUES 
+('John Doe', 'https://randomuser.me/api/portraits/men/1.jpg', 'EMP001', '12345678', 'Senior Developer', 'Male'),
+('Jane Smith', 'https://randomuser.me/api/portraits/women/1.jpg', 'EMP002', '23456789', 'Project Manager', 'Female'),
+('Mike Johnson', 'https://randomuser.me/api/portraits/men/2.jpg', 'EMP003', '34567890', 'UI Designer', 'Male'),
+('Sarah Williams', 'https://randomuser.me/api/portraits/women/2.jpg', 'EMP004', '45678901', 'QA Engineer', 'Female')
 ON DUPLICATE KEY UPDATE id=id;
 
 -- Insert initial premises data

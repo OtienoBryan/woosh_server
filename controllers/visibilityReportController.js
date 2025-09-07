@@ -6,23 +6,66 @@ const visibilityReportController = {
   // Get all visibility reports
   getAllVisibilityReports: async (req, res) => {
     try {
-      const query = `
-        SELECT vr.*,
-               s.name as user_name,
-               c.name as client_name,
-               c.name as client_company_name
+      const { currentDate, startDate, endDate, salesRep, search } = req.query;
+      
+      let query = `
+        SELECT vr.id, vr.reportId, vr.comment, vr.imageUrl, vr.createdAt,
+               c.name AS outlet, co.name AS country, s.name AS salesRep
         FROM VisibilityReport vr
-        LEFT JOIN SalesRep s ON vr.userId = s.id
         LEFT JOIN Clients c ON vr.clientId = c.id
-        ORDER BY vr.createdAt DESC
+        LEFT JOIN Country co ON c.countryId = co.id
+        LEFT JOIN SalesRep s ON vr.userId = s.id
       `;
       
-      const [reports] = await db.query(query);
+      const params = [];
+      const whereConditions = [];
+      
+      // Add date filtering
+      if (currentDate) {
+        whereConditions.push(`DATE(vr.createdAt) = ?`);
+        params.push(currentDate);
+      } else if (startDate && endDate) {
+        whereConditions.push(`DATE(vr.createdAt) BETWEEN ? AND ?`);
+        params.push(startDate, endDate);
+      } else if (startDate) {
+        whereConditions.push(`DATE(vr.createdAt) >= ?`);
+        params.push(startDate);
+      } else if (endDate) {
+        whereConditions.push(`DATE(vr.createdAt) <= ?`);
+        params.push(endDate);
+      }
+      
+      // Add sales rep filter
+      if (salesRep && salesRep !== 'all') {
+        whereConditions.push(`s.name = ?`);
+        params.push(salesRep);
+      }
+      
+      // Add search filter
+      if (search && search.trim()) {
+        const searchTerm = `%${search.trim()}%`;
+        whereConditions.push(`(c.name LIKE ? OR co.name LIKE ? OR s.name LIKE ? OR vr.comment LIKE ?)`);
+        params.push(searchTerm, searchTerm, searchTerm, searchTerm);
+      }
+      
+      // Add WHERE clause if there are conditions
+      if (whereConditions.length > 0) {
+        query += ` WHERE ${whereConditions.join(' AND ')}`;
+      }
+      
+      query += ` ORDER BY vr.createdAt DESC`;
+      
+      const [reports] = await db.query(query, params);
       
       res.json({
         success: true,
-        message: 'Visibility reports fetched successfully',
-        visibilityReports: reports
+        data: reports,
+        pagination: {
+          page: 1,
+          limit: reports.length,
+          total: reports.length,
+          totalPages: 1
+        }
       });
     } catch (error) {
       console.error('Error fetching visibility reports:', error);

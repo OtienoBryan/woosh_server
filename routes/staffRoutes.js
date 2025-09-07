@@ -32,6 +32,12 @@ router.get('/documents', documentController.getAllDocuments);
 // Delete document
 router.delete('/documents/:id', documentController.deleteDocument);
 
+// Document category management routes
+router.get('/document-categories', documentController.getAllCategories);
+router.post('/document-categories', documentController.createCategory);
+router.put('/document-categories/:id', documentController.updateCategory);
+router.delete('/document-categories/:id', documentController.deleteCategory);
+
 // Employee contract routes
 router.post('/staff/:id/contracts', upload.single('file'), staffController.uploadContract);
 router.get('/staff/:id/contracts', staffController.getContracts);
@@ -64,6 +70,9 @@ router.get('/departments', departmentController.getAllDepartments);
 router.post('/departments', departmentController.addDepartment);
 router.put('/departments/:id', departmentController.editDepartment);
 router.patch('/departments/:id/deactivate', departmentController.deactivateDepartment);
+
+// My Departments routes (new department system)
+router.get('/my-departments', staffController.getAllDepartments);
 
 // Attendance routes
 router.get('/attendance/today', attendanceController.getTodayAttendance);

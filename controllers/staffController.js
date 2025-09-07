@@ -18,7 +18,12 @@ const staffController = {
         return res.status(500).json({ message: 'Staff table does not exist', error: 'Database table missing' });
       }
       const [columns] = await db.query('DESCRIBE staff');
-      const [staff] = await db.query('SELECT * FROM staff ORDER BY created_at DESC');
+      const [staff] = await db.query(`
+        SELECT s.*, md.name as department_name, md.description as department_description
+        FROM staff s 
+        LEFT JOIN my_departments md ON s.department_id = md.id 
+        ORDER BY s.created_at DESC
+      `);
       if (!staff || staff.length === 0) {
         return res.json([]);
       }
@@ -73,27 +78,25 @@ const staffController = {
   },
 
   createStaff: async (req, res) => {
-    const { name, photo_url, empl_no, id_no, role, phone_number, department, business_email, department_email, salary, employment_type, gender } = req.body;
+    const { name, photo_url, empl_no, id_no, role, phone_number, department, department_id, business_email, department_email, salary, employment_type, gender } = req.body;
     
     try {
       const [result] = await db.query(
-        'INSERT INTO staff (name, photo_url, empl_no, id_no, role, phone_number, department, business_email, department_email, salary, employment_type, gender) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [name, photo_url, empl_no, id_no, role, phone_number, department, business_email, department_email, salary, employment_type, gender]
+        'INSERT INTO staff (name, photo_url, empl_no, id_no, role, phone_number, department, department_id, business_email, department_email, salary, employment_type, gender) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [name, photo_url, empl_no, id_no, role, phone_number, department, department_id, business_email, department_email, salary, employment_type, gender]
       );
+      
+      // Get the created staff with department info
+      const [newStaff] = await db.query(`
+        SELECT s.*, md.name as department_name, md.description as department_description
+        FROM staff s 
+        LEFT JOIN my_departments md ON s.department_id = md.id 
+        WHERE s.id = ?
+      `, [result.insertId]);
+      
       res.status(201).json({
-        id: result.insertId,
-        name,
-        photo_url,
-        empl_no,
-        id_no,
-        role,
-        phone_number,
-        department,
-        business_email,
-        department_email,
-        salary,
-        employment_type,
-        gender
+        ...newStaff[0],
+        status: newStaff[0].is_active ? 1 : 0
       });
     } catch (error) {
       console.error('Error creating staff member:', error);
@@ -102,27 +105,25 @@ const staffController = {
   },
 
   updateStaff: async (req, res) => {
-    const { name, photo_url, empl_no, id_no, role, phone_number, department, business_email, department_email, salary, employment_type, gender } = req.body;
+    const { name, photo_url, empl_no, id_no, role, phone_number, department, department_id, business_email, department_email, salary, employment_type, gender } = req.body;
     
     try {
       await db.query(
-        'UPDATE staff SET name = ?, photo_url = ?, empl_no = ?, id_no = ?, role = ?, phone_number = ?, department = ?, business_email = ?, department_email = ?, salary = ?, employment_type = ?, gender = ? WHERE id = ?',
-        [name, photo_url, empl_no, id_no, role, phone_number, department, business_email, department_email, salary, employment_type, gender, req.params.id]
+        'UPDATE staff SET name = ?, photo_url = ?, empl_no = ?, id_no = ?, role = ?, phone_number = ?, department = ?, department_id = ?, business_email = ?, department_email = ?, salary = ?, employment_type = ?, gender = ? WHERE id = ?',
+        [name, photo_url, empl_no, id_no, role, phone_number, department, department_id, business_email, department_email, salary, employment_type, gender, req.params.id]
       );
+      
+      // Get the updated staff with department info
+      const [updatedStaff] = await db.query(`
+        SELECT s.*, md.name as department_name, md.description as department_description
+        FROM staff s 
+        LEFT JOIN my_departments md ON s.department_id = md.id 
+        WHERE s.id = ?
+      `, [req.params.id]);
+      
       res.json({
-        id: parseInt(req.params.id),
-        name,
-        photo_url,
-        empl_no,
-        id_no,
-        role,
-        phone_number,
-        department,
-        business_email,
-        department_email,
-        salary,
-        employment_type,
-        gender
+        ...updatedStaff[0],
+        status: updatedStaff[0].is_active ? 1 : 0
       });
     } catch (error) {
       console.error('Error updating staff member:', error);
@@ -910,6 +911,16 @@ const staffController = {
     } catch (error) {
       console.error('Error fetching out of office requests:', error);
       res.status(500).json({ message: 'Failed to fetch out of office requests', error: error.message });
+    }
+  },
+
+  getAllDepartments: async (req, res) => {
+    try {
+      const [departments] = await db.query('SELECT * FROM my_departments WHERE is_active = TRUE ORDER BY name');
+      res.json(departments);
+    } catch (error) {
+      console.error('Error fetching departments:', error);
+      res.status(500).json({ message: 'Failed to fetch departments', error: error.message });
     }
   }
 };

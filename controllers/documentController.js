@@ -143,6 +143,106 @@ const documentController = {
       res.status(500).json({ message: 'Failed to delete document', error: error.message });
     }
   },
+
+  // Category Management Functions
+  getAllCategories: async (req, res) => {
+    try {
+      const [categories] = await db.query(
+        'SELECT * FROM document_categories WHERE is_active = TRUE ORDER BY name ASC'
+      );
+      res.json(categories);
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to fetch categories', error: error.message });
+    }
+  },
+
+  createCategory: async (req, res) => {
+    try {
+      const { name, description, color } = req.body;
+      
+      if (!name) {
+        return res.status(400).json({ message: 'Category name is required' });
+      }
+
+      const [result] = await db.query(
+        'INSERT INTO document_categories (name, description, color) VALUES (?, ?, ?)',
+        [name, description || null, color || '#3B82F6']
+      );
+
+      const [newCategory] = await db.query(
+        'SELECT * FROM document_categories WHERE id = ?',
+        [result.insertId]
+      );
+
+      res.status(201).json(newCategory[0]);
+    } catch (error) {
+      if (error.code === 'ER_DUP_ENTRY') {
+        res.status(400).json({ message: 'Category name already exists' });
+      } else {
+        res.status(500).json({ message: 'Failed to create category', error: error.message });
+      }
+    }
+  },
+
+  updateCategory: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { name, description, color, is_active } = req.body;
+
+      const [result] = await db.query(
+        'UPDATE document_categories SET name = ?, description = ?, color = ?, is_active = ?, updated_at = NOW() WHERE id = ?',
+        [name, description, color, is_active !== undefined ? is_active : true, id]
+      );
+
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ message: 'Category not found' });
+      }
+
+      const [updatedCategory] = await db.query(
+        'SELECT * FROM document_categories WHERE id = ?',
+        [id]
+      );
+
+      res.json(updatedCategory[0]);
+    } catch (error) {
+      if (error.code === 'ER_DUP_ENTRY') {
+        res.status(400).json({ message: 'Category name already exists' });
+      } else {
+        res.status(500).json({ message: 'Failed to update category', error: error.message });
+      }
+    }
+  },
+
+  deleteCategory: async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      // Check if category is being used by any documents
+      const [documents] = await db.query(
+        'SELECT COUNT(*) as count FROM documents WHERE category_id = ?',
+        [id]
+      );
+
+      if (documents[0].count > 0) {
+        return res.status(400).json({ 
+          message: 'Cannot delete category that is being used by documents. Please reassign documents first.' 
+        });
+      }
+
+      const [result] = await db.query(
+        'DELETE FROM document_categories WHERE id = ?',
+        [id]
+      );
+
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ message: 'Category not found' });
+      }
+
+      res.json({ message: 'Category deleted successfully' });
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to delete category', error: error.message });
+    }
+  },
 };
 
 module.exports = documentController; 

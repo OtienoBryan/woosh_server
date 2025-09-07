@@ -16,6 +16,8 @@ const clientController = {
       const countryId = req.query.countryId ? String(req.query.countryId) : '';
       const regionId = req.query.regionId ? String(req.query.regionId) : '';
       const routeId = req.query.routeId ? String(req.query.routeId) : '';
+      const sortField = req.query.sortField ? String(req.query.sortField).trim() : '';
+      const sortOrder = req.query.sortOrder ? String(req.query.sortOrder).trim().toUpperCase() : 'ASC';
 
       let where = '';
       let params = [];
@@ -41,6 +43,21 @@ const clientController = {
         where = 'WHERE ' + whereClauses.join(' AND ');
       }
 
+      // Build ORDER BY clause
+      let orderBy = 'ORDER BY c.created_at DESC'; // Default sorting
+      if (sortField) {
+        // Validate sortField to prevent SQL injection
+        const allowedSortFields = ['balance', 'name', 'created_at', 'contact', 'email'];
+        if (allowedSortFields.includes(sortField)) {
+          const validSortOrder = (sortOrder === 'DESC') ? 'DESC' : 'ASC';
+          if (sortField === 'balance') {
+            orderBy = `ORDER BY COALESCE(CAST(c.balance AS DECIMAL(15,2)), 0) ${validSortOrder}`;
+          } else {
+            orderBy = `ORDER BY c.${sortField} ${validSortOrder}`;
+          }
+        }
+      }
+
       // Get total count
       const [countRows] = await db.query(`SELECT COUNT(*) as count FROM Clients c ${where}`, params);
       const total = countRows[0].count;
@@ -64,7 +81,7 @@ const clientController = {
            LEFT JOIN Country co ON c.countryId = co.id
            LEFT JOIN Regions r ON c.region_id = r.id
            LEFT JOIN routes rt ON c.route_id_update = rt.id
-           ${where} ORDER BY c.name ASC`,
+           ${where} ${orderBy}`,
           params
         );
         console.log(`[getAllClients] returning ALL ${clients.length} clients (no pagination)`);
@@ -84,7 +101,7 @@ const clientController = {
            LEFT JOIN Country co ON c.countryId = co.id
            LEFT JOIN Regions r ON c.region_id = r.id
            LEFT JOIN routes rt ON c.route_id_update = rt.id
-           ${where} ORDER BY c.created_at DESC LIMIT ? OFFSET ?`,
+           ${where} ${orderBy} LIMIT ? OFFSET ?`,
           [...params, limit, offset]
         );
         console.log(`[getAllClients] returning ${clients.length} clients (page ${page})`);

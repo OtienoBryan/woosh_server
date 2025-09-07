@@ -43,7 +43,19 @@ exports.getAllRoutes = async (req, res) => {
 // Get all sales reps
 exports.getAllSalesReps = async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT * FROM SalesRep ORDER BY name');
+    const { status } = req.query;
+    
+    let query = 'SELECT * FROM SalesRep';
+    let params = [];
+    
+    if (status !== undefined) {
+      query += ' WHERE status = ?';
+      params.push(status);
+    }
+    
+    query += ' ORDER BY name';
+    
+    const [rows] = await db.query(query, params);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch sales reps', details: err.message });

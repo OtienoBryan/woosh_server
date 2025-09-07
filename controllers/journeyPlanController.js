@@ -17,7 +17,7 @@ const journeyPlanController = {
         ORDER BY jp.date DESC, jp.time ASC
       `);
       
-      res.json({ success: true, data: plans });
+      res.json(plans);
     } catch (error) {
       console.error('Get all journey plans error:', error);
       res.status(500).json({ success: false, message: 'Failed to fetch journey plans', error: error.message });
@@ -41,7 +41,7 @@ const journeyPlanController = {
         ORDER BY jp.date ASC, jp.time ASC
       `, [userId]);
       
-      res.json({ success: true, data: plans });
+      res.json(plans);
     } catch (error) {
       console.error('Get journey plans by user error:', error);
       res.status(500).json({ success: false, message: 'Failed to fetch journey plans', error: error.message });
@@ -71,7 +71,7 @@ const journeyPlanController = {
       if (plans.length === 0) {
         return res.status(404).json({ success: false, message: 'Journey plan not found' });
       }
-      res.json({ success: true, data: plans[0] });
+      res.json(plans[0]);
     } catch (error) {
       console.error('Get journey plan error:', error);
       res.status(500).json({ success: false, message: 'Failed to fetch journey plans', error: error.message });

@@ -412,6 +412,125 @@ exports.deleteDistributorsTarget = async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete distributors target', details: err.message });
   }
+};
+
+// General Sales Rep Targets Management
+// Get targets for a specific sales rep
+exports.getSalesRepTargets = async (req, res) => {
+  const { id } = req.params; // sales_rep_id
+  const { year } = req.query;
+  try {
+    let query = 'SELECT * FROM sales_rep_targets WHERE sales_rep_id = ?';
+    let params = [id];
+    
+    if (year) {
+      query += ' AND year = ?';
+      params.push(year);
+    }
+    
+    query += ' ORDER BY year DESC, month DESC, created_at DESC';
+    
+    const [rows] = await db.query(query, params);
+    
+    // Transform the data to match frontend expectations
+    const transformedRows = rows.map(row => ({
+      id: row.id,
+      salesRepId: row.sales_rep_id,
+      year: row.year,
+      month: row.month,
+      vapesTarget: row.vapes_target,
+      pouchesTarget: row.pouches_target,
+      created_at: row.created_at,
+      updated_at: row.updated_at
+    }));
+    
+    res.json(transformedRows);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch sales rep targets', details: err.message });
+  }
+};
+
+// Create or update a target for a sales rep
+exports.setSalesRepTarget = async (req, res) => {
+  const { id } = req.params; // sales_rep_id
+  const { year, month, vapesTarget, pouchesTarget } = req.body;
+  
+  if (!year || !month) {
+    return res.status(400).json({ error: 'Year and month are required' });
+  }
+  
+  try {
+    // Check if target already exists for this sales rep, year, and month
+    const [existing] = await db.query(
+      'SELECT id FROM sales_rep_targets WHERE sales_rep_id = ? AND year = ? AND month = ?',
+      [id, year, month]
+    );
+    
+    if (existing.length > 0) {
+      // Update existing target
+      await db.query(
+        'UPDATE sales_rep_targets SET vapes_target = ?, pouches_target = ?, updated_at = NOW() WHERE id = ?',
+        [vapesTarget || 0, pouchesTarget || 0, existing[0].id]
+      );
+      res.json({ 
+        id: existing[0].id, 
+        salesRepId: parseInt(id), 
+        year, 
+        month, 
+        vapesTarget: vapesTarget || 0, 
+        pouchesTarget: pouchesTarget || 0 
+      });
+    } else {
+      // Create new target
+      const [result] = await db.query(
+        'INSERT INTO sales_rep_targets (sales_rep_id, year, month, vapes_target, pouches_target) VALUES (?, ?, ?, ?, ?)',
+        [id, year, month, vapesTarget || 0, pouchesTarget || 0]
+      );
+      res.status(201).json({ 
+        id: result.insertId, 
+        salesRepId: parseInt(id), 
+        year, 
+        month, 
+        vapesTarget: vapesTarget || 0, 
+        pouchesTarget: pouchesTarget || 0 
+      });
+    }
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to set sales rep target', details: err.message });
+  }
+};
+
+// Update an existing target
+exports.updateSalesRepTarget = async (req, res) => {
+  const { targetId } = req.params;
+  const { year, month, vapesTarget, pouchesTarget } = req.body;
+  
+  try {
+    await db.query(
+      'UPDATE sales_rep_targets SET year = ?, month = ?, vapes_target = ?, pouches_target = ?, updated_at = NOW() WHERE id = ?',
+      [year, month, vapesTarget || 0, pouchesTarget || 0, targetId]
+    );
+    res.json({ 
+      id: parseInt(targetId), 
+      year, 
+      month, 
+      vapesTarget: vapesTarget || 0, 
+      pouchesTarget: pouchesTarget || 0 
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update sales rep target', details: err.message });
+  }
+};
+
+// Delete a target
+exports.deleteSalesRepTarget = async (req, res) => {
+  const { targetId } = req.params;
+  try {
+    await db.query('DELETE FROM sales_rep_targets WHERE id = ?', [targetId]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete sales rep target', details: err.message });
+  }
 }; 
 
 // Get manager assignments (one per type) for a sales rep
@@ -523,15 +642,17 @@ exports.getSalesRepPerformance = async (req, res) => {
       });
     }
 
-    // 1. Get all sales reps (include route_id_update, route name, and region)
+    // 1. Get all active sales reps (include route_id_update, route name, and region)
     console.log('[getSalesRepPerformance] Querying SalesRep table...');
     const [salesReps] = await db.query(`
       SELECT s.id, s.name, s.route_id_update, r.name AS route_name, s.region, rg.name AS region_name, s.country
       FROM SalesRep s
       LEFT JOIN routes r ON s.route_id_update = r.id
       LEFT JOIN Regions rg ON s.region = rg.id OR s.region = rg.name
+      WHERE s.status = 1
     `);
-    console.log('[getSalesRepPerformance] SalesReps found:', salesReps.length);
+    console.log('[getSalesRepPerformance] Active SalesReps found:', salesReps.length);
+    console.log('[getSalesRepPerformance] Sample sales rep data:', salesReps.slice(0, 3).map(rep => ({ id: rep.id, name: rep.name })));
 
     // 2. Get all targets for each type, filtered by date range if provided
     function filterTargets(targets) {
@@ -658,8 +779,9 @@ exports.getSalesRepPerformance = async (req, res) => {
 // Get master sales data for all clients by year
 exports.getMasterSalesData = async (req, res) => {
   try {
-    const { year, category, salesRep, categoryGroup, startDate, endDate, clientStatus } = req.query;
+    const { year, category, salesRep, categoryGroup, startDate, endDate, clientStatus, viewType } = req.query;
     const currentYear = year || new Date().getFullYear();
+    const isQuantityView = viewType === 'quantity';
     
     // Parse category and salesRep as arrays
     const categories = category ? (Array.isArray(category) ? category : [category]) : [];
@@ -670,19 +792,19 @@ exports.getMasterSalesData = async (req, res) => {
       SELECT 
         c.id as client_id,
         c.name as client_name,
-        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 1 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as january,
-        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 2 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as february,
-        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 3 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as march,
-        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 4 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as april,
-        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 5 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as may,
-        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 6 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as june,
-        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 7 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as july,
-        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 8 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as august,
-        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 9 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as september,
-        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 10 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as october,
-        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 11 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as november,
-        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 12 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as december,
-        COALESCE(SUM(CASE WHEN YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as total
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 1 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as january,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 2 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as february,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 3 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as march,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 4 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as april,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 5 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as may,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 6 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as june,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 7 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as july,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 8 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as august,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 9 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as september,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 10 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as october,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 11 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as november,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 12 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as december,
+        COALESCE(SUM(CASE WHEN YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as total
       FROM Clients c
       LEFT JOIN sales_orders so ON c.id = so.client_id AND so.my_status = 1
       LEFT JOIN sales_order_items soi ON so.id = soi.sales_order_id
@@ -1111,5 +1233,138 @@ exports.getSalesRepReports = async (req, res) => {
       sqlMessage: err.sqlMessage
     });
     res.status(500).json({ error: 'Failed to fetch sales rep reports', details: err.message });
+  }
+};
+
+// Get sales rep monthly performance data
+exports.getSalesRepMonthlyPerformance = async (req, res) => {
+  try {
+    const { year, salesRep, startDate, endDate, viewType } = req.query;
+    const currentYear = year || new Date().getFullYear();
+    const isQuantityView = viewType === 'quantity';
+    
+    // Parse salesRep as array
+    const salesReps = salesRep ? (Array.isArray(salesRep) ? salesRep : [salesRep]) : [];
+
+
+
+
+    // Get all sales reps with their monthly sales data using salesrep from sales_orders
+    let rows;
+    try {
+      const [queryRows] = await db.query(`
+      SELECT 
+        sr.id as sales_rep_id,
+        sr.name as sales_rep_name,
+        ${isQuantityView ? `
+        -- Vapes quantities (categories 1, 3)
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 1 AND YEAR(so.order_date) = ? AND p.category_id IN (1, 3) THEN soi.quantity ELSE 0 END), 0) as january_vapes,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 2 AND YEAR(so.order_date) = ? AND p.category_id IN (1, 3) THEN soi.quantity ELSE 0 END), 0) as february_vapes,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 3 AND YEAR(so.order_date) = ? AND p.category_id IN (1, 3) THEN soi.quantity ELSE 0 END), 0) as march_vapes,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 4 AND YEAR(so.order_date) = ? AND p.category_id IN (1, 3) THEN soi.quantity ELSE 0 END), 0) as april_vapes,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 5 AND YEAR(so.order_date) = ? AND p.category_id IN (1, 3) THEN soi.quantity ELSE 0 END), 0) as may_vapes,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 6 AND YEAR(so.order_date) = ? AND p.category_id IN (1, 3) THEN soi.quantity ELSE 0 END), 0) as june_vapes,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 7 AND YEAR(so.order_date) = ? AND p.category_id IN (1, 3) THEN soi.quantity ELSE 0 END), 0) as july_vapes,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 8 AND YEAR(so.order_date) = ? AND p.category_id IN (1, 3) THEN soi.quantity ELSE 0 END), 0) as august_vapes,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 9 AND YEAR(so.order_date) = ? AND p.category_id IN (1, 3) THEN soi.quantity ELSE 0 END), 0) as september_vapes,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 10 AND YEAR(so.order_date) = ? AND p.category_id IN (1, 3) THEN soi.quantity ELSE 0 END), 0) as october_vapes,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 11 AND YEAR(so.order_date) = ? AND p.category_id IN (1, 3) THEN soi.quantity ELSE 0 END), 0) as november_vapes,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 12 AND YEAR(so.order_date) = ? AND p.category_id IN (1, 3) THEN soi.quantity ELSE 0 END), 0) as december_vapes,
+        COALESCE(SUM(CASE WHEN YEAR(so.order_date) = ? AND p.category_id IN (1, 3) THEN soi.quantity ELSE 0 END), 0) as total_vapes,
+        -- Pouches quantities (categories 4, 5)
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 1 AND YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as january_pouches,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 2 AND YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as february_pouches,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 3 AND YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as march_pouches,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 4 AND YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as april_pouches,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 5 AND YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as may_pouches,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 6 AND YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as june_pouches,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 7 AND YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as july_pouches,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 8 AND YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as august_pouches,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 9 AND YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as september_pouches,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 10 AND YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as october_pouches,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 11 AND YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as november_pouches,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 12 AND YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as december_pouches,
+        COALESCE(SUM(CASE WHEN YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as total_pouches
+        ` : `
+        -- Sales values
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 1 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as january,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 2 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as february,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 3 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as march,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 4 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as april,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 5 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as may,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 6 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as june,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 7 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as july,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 8 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as august,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 9 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as september,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 10 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as october,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 11 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as november,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 12 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as december,
+        COALESCE(SUM(CASE WHEN YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as total
+        `}
+      FROM SalesRep sr
+      LEFT JOIN sales_orders so ON (sr.id = so.salesrep OR sr.id = CAST(so.salesrep AS UNSIGNED)) AND so.my_status >= 1 AND so.my_status <= 4
+      LEFT JOIN sales_order_items soi ON so.id = soi.sales_order_id
+      LEFT JOIN products p ON soi.product_id = p.id
+      WHERE sr.status = 1
+      ${(() => {
+        const conditions = [];
+        if (salesReps.length > 0) {
+          conditions.push('sr.id IN (' + salesReps.map(() => '?').join(',') + ')');
+        }
+        if (startDate) {
+          conditions.push('so.order_date >= ?');
+        }
+        if (endDate) {
+          conditions.push('so.order_date <= ?');
+        }
+        return conditions.length > 0 ? 'AND ' + conditions.join(' AND ') : '';
+      })()}
+      GROUP BY sr.id, sr.name
+      ORDER BY ${isQuantityView ? 
+        '(COALESCE(SUM(CASE WHEN YEAR(so.order_date) = ? AND p.category_id IN (1, 3) THEN soi.quantity ELSE 0 END), 0) + COALESCE(SUM(CASE WHEN YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0))' : 
+        'COALESCE(SUM(CASE WHEN YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0)'
+      } DESC, sr.name
+    `, (() => {
+      let params;
+      if (isQuantityView) {
+        // For quantity view: 12 months for vapes + 1 total for vapes + 12 months for pouches + 1 total for pouches + 2 for ORDER BY = 28 parameters
+        params = [
+          currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, 
+          currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, // vapes months + total
+          currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, 
+          currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, // pouches months + total
+          currentYear, currentYear // ORDER BY vapes and pouches totals
+        ];
+      } else {
+        // For sales view: 12 months + 1 total + 1 for ORDER BY = 14 parameters
+        params = [currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, 
+          currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, // months + total
+          currentYear // ORDER BY total
+        ];
+      }
+      if (salesReps.length > 0) params.push(...salesReps);
+      if (startDate) params.push(startDate);
+      if (endDate) params.push(endDate);
+      return params;
+    })());
+
+      rows = queryRows;
+    } catch (queryErr) {
+      console.error('Main query error:', queryErr.message);
+      console.error('Query parameters:', {
+        year: currentYear,
+        viewType,
+        isQuantityView,
+        salesReps,
+        startDate,
+        endDate
+      });
+      throw queryErr;
+    }
+
+    res.json(rows);
+  } catch (err) {
+    console.error('Error fetching sales rep monthly performance:', err);
+    res.status(500).json({ error: 'Failed to fetch sales rep monthly performance', details: err.message });
   }
 };

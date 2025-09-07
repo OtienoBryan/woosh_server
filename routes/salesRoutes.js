@@ -56,6 +56,12 @@ router.post('/sales-reps/:id/distributors-targets', salesController.addDistribut
 router.put('/sales-reps/:id/distributors-targets/:targetId', salesController.updateDistributorsTarget);
 router.delete('/sales-reps/:id/distributors-targets/:targetId', salesController.deleteDistributorsTarget);
 
+// General sales rep targets
+router.get('/sales-reps/:id/targets', salesController.getSalesRepTargets);
+router.post('/sales-reps/:id/targets', salesController.setSalesRepTarget);
+router.put('/sales-reps/targets/:targetId', salesController.updateSalesRepTarget);
+router.delete('/sales-reps/targets/:targetId', salesController.deleteSalesRepTarget);
+
 // Manager assignments for sales rep
 router.get('/sales-reps/:id/manager-assignments', salesController.getManagerAssignments);
 router.post('/sales-reps/:id/manager-assignments', salesController.setManagerAssignments);
@@ -71,6 +77,9 @@ router.get('/master-sales/categories', salesController.getMasterSalesCategories)
 
 // Get available sales reps for master sales filter
 router.get('/master-sales/sales-reps', salesController.getMasterSalesSalesReps);
+
+// Get sales rep monthly performance data
+router.get('/sales-rep-monthly-performance', salesController.getSalesRepMonthlyPerformance);
 
 // Get detailed sales data for a specific client and month
 router.get('/client-month-details', salesController.getClientMonthDetails);

@@ -1284,7 +1284,33 @@ exports.getSalesRepMonthlyPerformance = async (req, res) => {
         COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 10 AND YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as october_pouches,
         COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 11 AND YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as november_pouches,
         COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 12 AND YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as december_pouches,
-        COALESCE(SUM(CASE WHEN YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as total_pouches
+        COALESCE(SUM(CASE WHEN YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as total_pouches,
+        -- Vapes targets
+        COALESCE(MAX(CASE WHEN t.month = 1 THEN t.vapes_target ELSE 0 END), 0) as january_vapes_target,
+        COALESCE(MAX(CASE WHEN t.month = 2 THEN t.vapes_target ELSE 0 END), 0) as february_vapes_target,
+        COALESCE(MAX(CASE WHEN t.month = 3 THEN t.vapes_target ELSE 0 END), 0) as march_vapes_target,
+        COALESCE(MAX(CASE WHEN t.month = 4 THEN t.vapes_target ELSE 0 END), 0) as april_vapes_target,
+        COALESCE(MAX(CASE WHEN t.month = 5 THEN t.vapes_target ELSE 0 END), 0) as may_vapes_target,
+        COALESCE(MAX(CASE WHEN t.month = 6 THEN t.vapes_target ELSE 0 END), 0) as june_vapes_target,
+        COALESCE(MAX(CASE WHEN t.month = 7 THEN t.vapes_target ELSE 0 END), 0) as july_vapes_target,
+        COALESCE(MAX(CASE WHEN t.month = 8 THEN t.vapes_target ELSE 0 END), 0) as august_vapes_target,
+        COALESCE(MAX(CASE WHEN t.month = 9 THEN t.vapes_target ELSE 0 END), 0) as september_vapes_target,
+        COALESCE(MAX(CASE WHEN t.month = 10 THEN t.vapes_target ELSE 0 END), 0) as october_vapes_target,
+        COALESCE(MAX(CASE WHEN t.month = 11 THEN t.vapes_target ELSE 0 END), 0) as november_vapes_target,
+        COALESCE(MAX(CASE WHEN t.month = 12 THEN t.vapes_target ELSE 0 END), 0) as december_vapes_target,
+        -- Pouches targets
+        COALESCE(MAX(CASE WHEN t.month = 1 THEN t.pouches_target ELSE 0 END), 0) as january_pouches_target,
+        COALESCE(MAX(CASE WHEN t.month = 2 THEN t.pouches_target ELSE 0 END), 0) as february_pouches_target,
+        COALESCE(MAX(CASE WHEN t.month = 3 THEN t.pouches_target ELSE 0 END), 0) as march_pouches_target,
+        COALESCE(MAX(CASE WHEN t.month = 4 THEN t.pouches_target ELSE 0 END), 0) as april_pouches_target,
+        COALESCE(MAX(CASE WHEN t.month = 5 THEN t.pouches_target ELSE 0 END), 0) as may_pouches_target,
+        COALESCE(MAX(CASE WHEN t.month = 6 THEN t.pouches_target ELSE 0 END), 0) as june_pouches_target,
+        COALESCE(MAX(CASE WHEN t.month = 7 THEN t.pouches_target ELSE 0 END), 0) as july_pouches_target,
+        COALESCE(MAX(CASE WHEN t.month = 8 THEN t.pouches_target ELSE 0 END), 0) as august_pouches_target,
+        COALESCE(MAX(CASE WHEN t.month = 9 THEN t.pouches_target ELSE 0 END), 0) as september_pouches_target,
+        COALESCE(MAX(CASE WHEN t.month = 10 THEN t.pouches_target ELSE 0 END), 0) as october_pouches_target,
+        COALESCE(MAX(CASE WHEN t.month = 11 THEN t.pouches_target ELSE 0 END), 0) as november_pouches_target,
+        COALESCE(MAX(CASE WHEN t.month = 12 THEN t.pouches_target ELSE 0 END), 0) as december_pouches_target
         ` : `
         -- Sales values
         COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 1 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as january,
@@ -1305,6 +1331,7 @@ exports.getSalesRepMonthlyPerformance = async (req, res) => {
       LEFT JOIN sales_orders so ON (sr.id = so.salesrep OR sr.id = CAST(so.salesrep AS UNSIGNED)) AND so.my_status >= 1 AND so.my_status <= 4
       LEFT JOIN sales_order_items soi ON so.id = soi.sales_order_id
       LEFT JOIN products p ON soi.product_id = p.id
+      LEFT JOIN sales_rep_targets t ON sr.id = t.sales_rep_id AND t.year = ?
       WHERE sr.status = 1
       ${(() => {
         const conditions = [];
@@ -1327,18 +1354,20 @@ exports.getSalesRepMonthlyPerformance = async (req, res) => {
     `, (() => {
       let params;
       if (isQuantityView) {
-        // For quantity view: 12 months for vapes + 1 total for vapes + 12 months for pouches + 1 total for pouches + 2 for ORDER BY = 28 parameters
+        // For quantity view: 12 months for vapes + 1 total for vapes + 12 months for pouches + 1 total for pouches + 1 for targets year + 2 for ORDER BY = 29 parameters
         params = [
           currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, 
           currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, // vapes months + total
           currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, 
           currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, // pouches months + total
+          currentYear, // targets year
           currentYear, currentYear // ORDER BY vapes and pouches totals
         ];
       } else {
-        // For sales view: 12 months + 1 total + 1 for ORDER BY = 14 parameters
+        // For sales view: 12 months + 1 total + 1 for targets year + 1 for ORDER BY = 15 parameters
         params = [currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, 
           currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, // months + total
+          currentYear, // targets year
           currentYear // ORDER BY total
         ];
       }

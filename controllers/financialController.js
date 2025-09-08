@@ -531,8 +531,9 @@ const dashboardController = {
       const [purchasesResult] = await db.query(`
         SELECT COALESCE(SUM(total_amount), 0) as totalPurchases 
         FROM purchase_orders 
-        WHERE status IN ('received', 'sent')
-        AND DATE(order_date) = CURDATE()
+        WHERE status = 'received'
+        AND YEAR(order_date) = YEAR(CURDATE())
+        AND MONTH(order_date) = MONTH(CURDATE())
       `);
       
       // Get total receivables (outstanding client payments)
@@ -596,7 +597,9 @@ const dashboardController = {
       const [purchasesResult] = await db.query(`
         SELECT COALESCE(SUM(total_amount), 0) as totalPurchases 
         FROM purchase_orders 
-        WHERE status IN ('received', 'sent')
+        WHERE status = 'received'
+        AND YEAR(order_date) = YEAR(CURDATE())
+        AND MONTH(order_date) = MONTH(CURDATE())
       `);
       
       const [receivablesResult] = await db.query(`

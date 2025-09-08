@@ -12,7 +12,7 @@ process.env.TZ = 'UTC';
 process.env.NODE_TZ = 'UTC';
 
 // Try to require database and other modules, but don't crash if they fail
-let db, staffController, roleController, multer, upload, uploadController, teamController, clientController, branchController, serviceChargeController, journeyPlanController, payrollRoutes, financialRoutes, staffRoutes, chatRoutes, clientRoutes, salesRoutes, managerRoutes, noticeRoutes, salesRepLeaveRoutes, calendarTaskRoutes, userRoutes, loginHistoryRoutes, journeyPlanRoutes, riderRoutes, myVisibilityReportRoutes, feedbackReportRoutes, availabilityReportRoutes, leaveRequestRoutes, supplierRoutes, receiptRoutes, myAssetsRoutes, faultyProductsRoutes, storeRoutes, routesRoutes;
+let db, staffController, roleController, multer, upload, uploadController, teamController, clientController, branchController, serviceChargeController, journeyPlanController, payrollRoutes, financialRoutes, staffRoutes, chatRoutes, clientRoutes, salesRoutes, managerRoutes, noticeRoutes, salesRepLeaveRoutes, calendarTaskRoutes, userRoutes, loginHistoryRoutes, journeyPlanRoutes, riderRoutes, myVisibilityReportRoutes, feedbackReportRoutes, availabilityReportRoutes, leaveRequestRoutes, supplierRoutes, receiptRoutes, myAssetsRoutes, faultyProductsRoutes, storeRoutes, routesRoutes, upliftSaleRoutes;
 
 try {
   db = require('./database/db');
@@ -55,6 +55,7 @@ try {
   merchandiseRoutes = require('./routes/merchandiseRoutes');
   clientAssignmentRoutes = require('./routes/clientAssignmentRoutes');
   routesRoutes = require('./routes/routesRoutes');
+  upliftSaleRoutes = require('./routes/upliftSaleRoutes');
 } catch (error) {
   console.log('Some modules failed to load:', error.message);
 }
@@ -512,6 +513,7 @@ app.use('/api/sales-rep-leaves', salesRepLeaveRoutes);
 app.use('/api/calendar-tasks', calendarTaskRoutes);
 app.use('/api/tasks', require('./routes/tasksRoutes'));
 app.use('/api/users', userRoutes);
+app.use('/api/uplift-sales', upliftSaleRoutes);
 
 // Visibility Reports route
 app.get('/api/visibility-reports', async (req, res) => {

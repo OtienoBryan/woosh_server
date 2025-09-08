@@ -349,7 +349,7 @@ const storeController = {
   getInventoryTransactions: async (req, res) => {
     try {
       const { product_id, store_id, page = 1, limit = 50 } = req.query;
-      let sql = 'SELECT it.*, p.product_name, s.store_name, u.full_name as staff_name FROM inventory_transactions it LEFT JOIN products p ON it.product_id = p.id LEFT JOIN stores s ON it.store_id = s.id LEFT JOIN users u ON it.staff_id = u.id WHERE 1=1';
+      let sql = 'SELECT it.*, p.product_name, s.store_name, st.name as staff_name FROM inventory_transactions it LEFT JOIN products p ON it.product_id = p.id LEFT JOIN stores s ON it.store_id = s.id LEFT JOIN staff st ON it.staff_id = st.id WHERE 1=1';
       const params = [];
       if (product_id) {
         sql += ' AND it.product_id = ?';
@@ -970,10 +970,10 @@ const storeController = {
     try {
       const { store_id, staff_id, start_date, end_date, page = 1, limit = 50 } = req.query;
       let sql = `
-        SELECT st.*, s.store_name, u.full_name as staff_name
+        SELECT st.*, s.store_name, staff.name as staff_name
         FROM stock_takes st
         LEFT JOIN stores s ON st.store_id = s.id
-        LEFT JOIN users u ON st.staff_id = u.id
+        LEFT JOIN staff ON st.staff_id = staff.id
         WHERE 1=1
       `;
       const params = [];

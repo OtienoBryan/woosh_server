@@ -259,6 +259,7 @@ router.get('/reports/product-performance', reportsController.getProductPerforman
 router.get('/reports/cost-of-goods-sold-details', reportsController.getCostOfGoodsSoldDetails);
 router.get('/reports/sales-revenue-details', reportsController.getSalesRevenueDetails);
 router.get('/reports/gross-margin-details', reportsController.getGrossMarginDetails);
+router.get('/reports/sales-tax', reportsController.getSalesTaxReport);
 router.get('/reports/categories', reportsController.getAllCategories);
 router.get('/products-sale-report', getProductsSaleReport);
 router.get('/journal-entry-lines/:account_id', reportsController.getJournalEntriesForAccount);

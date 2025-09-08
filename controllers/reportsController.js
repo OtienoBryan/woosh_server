@@ -1627,6 +1627,72 @@ const reportsController = {
         details: error.message 
       });
     }
+  },
+
+  // Get Sales Tax Report
+  getSalesTaxReport: async (req, res) => {
+    try {
+      const { start_date, end_date } = req.query;
+      
+      let sql = `
+        SELECT 
+          je.id as journal_entry_id,
+          je.entry_number,
+          je.entry_date,
+          je.reference,
+          je.description as journal_description,
+          je.total_debit,
+          je.total_credit,
+          je.status,
+          je.created_at,
+          jel.id as line_id,
+          jel.account_id,
+          coa.account_code,
+          coa.account_name,
+          jel.debit_amount,
+          jel.credit_amount,
+          jel.description as line_description
+        FROM journal_entries je
+        JOIN journal_entry_lines jel ON je.id = jel.journal_entry_id
+        JOIN chart_of_accounts coa ON jel.account_id = coa.id
+        WHERE jel.account_id = 35
+      `;
+      
+      const params = [];
+      if (start_date) {
+        sql += ' AND je.entry_date >= ?';
+        params.push(start_date);
+      }
+      if (end_date) {
+        sql += ' AND je.entry_date <= ?';
+        params.push(end_date);
+      }
+      
+      sql += ' ORDER BY je.entry_date DESC, je.id DESC, jel.id ASC';
+      
+      const [rows] = await db.query(sql, params);
+      
+      // Calculate totals
+      const totalDebit = rows.reduce((sum, row) => sum + parseFloat(row.debit_amount || 0), 0);
+      const totalCredit = rows.reduce((sum, row) => sum + parseFloat(row.credit_amount || 0), 0);
+      const netTax = totalCredit - totalDebit;
+      
+      res.json({ 
+        success: true, 
+        data: {
+          entries: rows,
+          summary: {
+            total_debit: totalDebit,
+            total_credit: totalCredit,
+            net_tax_payable: netTax,
+            entry_count: rows.length
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching sales tax report:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch sales tax report' });
+    }
   }
 };
 

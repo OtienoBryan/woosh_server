@@ -15,6 +15,7 @@ router.get('/inventory/all', storeController.getAllStoresInventory);
 router.get('/inventory/summary', storeController.getInventorySummaryByStore);
 router.get('/inventory/transactions', storeController.getInventoryTransactions);
 router.get('/inventory/as-of', storeController.getInventoryAsOfDate);
+router.get('/inventory/in-transit', storeController.getInTransitProducts);
 
 // Stock transfer routes
 router.post('/stock-transfer', storeController.recordStockTransfer);

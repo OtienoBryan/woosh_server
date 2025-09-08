@@ -257,6 +257,35 @@ const storeController = {
     }
   },
 
+  // Get in-transit products from sales orders with my_status = 2 (shipped)
+  getInTransitProducts: async (req, res) => {
+    try {
+      const [rows] = await connection.query(`
+        SELECT 
+          soi.product_id,
+          p.product_name,
+          p.product_code,
+          p.category,
+          p.unit_of_measure,
+          p.cost_price,
+          p.selling_price,
+          SUM(soi.quantity) as in_transit_quantity,
+          SUM(soi.quantity * p.cost_price) as in_transit_value
+        FROM sales_order_items soi
+        LEFT JOIN sales_orders so ON soi.sales_order_id = so.id
+        LEFT JOIN products p ON soi.product_id = p.id
+        WHERE so.my_status = 2 AND p.is_active = true
+        GROUP BY soi.product_id, p.product_name, p.product_code, p.category, p.unit_of_measure, p.cost_price, p.selling_price
+        ORDER BY p.product_name
+      `);
+      
+      res.json({ success: true, data: rows });
+    } catch (error) {
+      console.error('Error fetching in-transit products:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch in-transit products' });
+    }
+  },
+
   // Get stock summary for all products across all stores
   getStockSummary: async (req, res) => {
     try {

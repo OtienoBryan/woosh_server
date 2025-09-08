@@ -225,6 +225,7 @@ router.get('/stores/:storeId/inventory', storeController.getStoreInventory);
 router.get('/stores-inventory', storeController.getAllStoresInventory);
 router.get('/inventory-summary', storeController.getInventorySummaryByStore);
 router.get('/stock-summary', storeController.getStockSummary);
+router.get('/inventory/in-transit', storeController.getInTransitProducts);
 
 // Payables Routes
 router.get('/payables/aging', payablesController.getAgingPayables);

@@ -814,8 +814,8 @@ const reportsController = {
   // Get Product Performance Report
   getProductPerformanceReport: async (req, res) => {
     try {
-      const { startDate, endDate, productType, country, region, salesRep } = req.query;
-      console.log('Product performance query params:', { startDate, endDate, productType, country, region, salesRep });
+      const { startDate, endDate, productType, country, region, salesRep, client, sku } = req.query;
+      console.log('Product performance query params:', { startDate, endDate, productType, country, region, salesRep, client, sku });
       let whereClauses = [];
       const params = [];
       if (startDate && endDate) {
@@ -846,22 +846,32 @@ const reportsController = {
         whereClauses.push('so.salesrep = ?');
         params.push(salesRep);
       }
+      if (client) {
+        whereClauses.push('so.client_id = ?');
+        params.push(client);
+      }
+      if (sku) {
+        whereClauses.push('p.category_id = ?');
+        params.push(sku);
+      }
       const whereClause = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
       const query = `
         SELECT 
           p.id as product_id,
           p.product_name,
           p.category_id,
+          cat.name as category_name,
           SUM(soi.quantity) as total_quantity_sold,
           SUM(soi.total_price) as total_sales_value
         FROM sales_order_items soi
         LEFT JOIN products p ON soi.product_id = p.id
+        LEFT JOIN Category cat ON p.category_id = cat.id
         LEFT JOIN sales_orders so ON soi.sales_order_id = so.id
         LEFT JOIN Clients c ON so.client_id = c.id
         LEFT JOIN Country co ON c.countryId = co.id
         LEFT JOIN Regions r ON c.region_id = r.id
         ${whereClause}
-        GROUP BY p.id, p.product_name, p.category_id
+        GROUP BY p.id, p.product_name, p.category_id, cat.name
         ORDER BY total_sales_value DESC
       `;
       console.log('Executing query:', query);

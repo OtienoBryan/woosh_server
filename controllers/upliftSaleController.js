@@ -377,6 +377,16 @@ const getUpliftSalesSummary = async (req, res) => {
 const getUpliftSaleItems = async (req, res) => {
   try {
     const { upliftSaleId } = req.params;
+    console.log('Getting items for uplift sale ID:', upliftSaleId);
+
+    // First check if the uplift sale exists
+    const [saleCheck] = await db.execute('SELECT id FROM UpliftSale WHERE id = ?', [upliftSaleId]);
+    if (saleCheck.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Uplift sale not found'
+      });
+    }
 
     const query = `
       SELECT 
@@ -388,18 +398,39 @@ const getUpliftSaleItems = async (req, res) => {
         usi.total,
         usi.createdAt,
         p.product_name,
-        p.product_code
+        p.product_code,
+        p.unit_of_measure
       FROM UpliftSaleItem usi
       LEFT JOIN products p ON usi.productId = p.id
       WHERE usi.upliftSaleId = ?
       ORDER BY usi.createdAt ASC
     `;
 
+    console.log('Executing query:', query);
+    console.log('With params:', [upliftSaleId]);
+
     const [rows] = await db.execute(query, [upliftSaleId]);
+    console.log('Query result:', rows.length, 'items found');
+
+    // Map the data to match the expected format (similar to sales order items)
+    const mappedItems = rows.map(item => ({
+      id: item.id,
+      upliftSaleId: item.upliftSaleId,
+      productId: item.productId,
+      quantity: item.quantity,
+      unitPrice: parseFloat(item.unitPrice),
+      total: parseFloat(item.total),
+      createdAt: item.createdAt,
+      product_name: item.product_name || `Product ${item.productId}`,
+      product_code: item.product_code || 'No Code',
+      unit_of_measure: item.unit_of_measure || 'PCS'
+    }));
+
+    console.log('Mapped items:', mappedItems);
 
     res.json({
       success: true,
-      data: rows
+      data: mappedItems
     });
   } catch (error) {
     console.error('Error fetching uplift sale items:', error);
@@ -622,6 +653,55 @@ const getSalesReps = async (req, res) => {
   }
 };
 
+// Debug endpoint to check database state
+const debugUpliftData = async (req, res) => {
+  try {
+    console.log('=== Debug Uplift Data ===');
+    
+    // Check UpliftSale count
+    const [saleCount] = await db.execute('SELECT COUNT(*) as count FROM UpliftSale');
+    console.log('UpliftSale count:', saleCount[0].count);
+    
+    // Check UpliftSaleItem count
+    const [itemCount] = await db.execute('SELECT COUNT(*) as count FROM UpliftSaleItem');
+    console.log('UpliftSaleItem count:', itemCount[0].count);
+    
+    // Check products count
+    const [productCount] = await db.execute('SELECT COUNT(*) as count FROM products');
+    console.log('Products count:', productCount[0].count);
+    
+    // Get sample data
+    const [sales] = await db.execute('SELECT id, clientId, userId, status, totalAmount FROM UpliftSale LIMIT 3');
+    const [items] = await db.execute('SELECT id, upliftSaleId, productId, quantity, unitPrice, total FROM UpliftSaleItem LIMIT 3');
+    const [products] = await db.execute('SELECT id, product_name, product_code FROM products LIMIT 3');
+    
+    res.json({
+      success: true,
+      data: {
+        upliftSales: {
+          count: saleCount[0].count,
+          samples: sales
+        },
+        upliftSaleItems: {
+          count: itemCount[0].count,
+          samples: items
+        },
+        products: {
+          count: productCount[0].count,
+          samples: products
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error in debug endpoint:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Debug failed',
+      message: error.message
+    });
+  }
+};
+
 module.exports = {
   getUpliftSales,
   getUpliftSale,
@@ -634,5 +714,6 @@ module.exports = {
   updateUpliftSaleItem,
   deleteUpliftSaleItem,
   getOutletAccounts,
-  getSalesReps
+  getSalesReps,
+  debugUpliftData
 };

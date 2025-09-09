@@ -836,10 +836,16 @@ const staffController = {
       // For each staff, calculate days present, leave, absent
       const results = staff.map(emp => {
         // Build set of all working days in month (exclude Sundays)
+        // Only include dates up to today to prevent counting future dates as absent
         const days = [];
+        const today = new Date();
+        today.setHours(23, 59, 59, 999); // Set to end of today to include today
+        
         for (let d = 1; d <= daysInMonth; d++) {
-          const dateObj = new Date(`${year}-${String(monthNum).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
-          if (dateObj.getDay() !== 0) { // 0 = Sunday
+          // Create date using Date constructor to avoid timezone issues
+          const dateObj = new Date(year, monthNum - 1, d);
+          // Only include dates that are not in the future
+          if (dateObj.getDay() !== 0 && dateObj <= today) { // 0 = Sunday
             days.push(dateObj.toISOString().slice(0, 10));
           }
         }

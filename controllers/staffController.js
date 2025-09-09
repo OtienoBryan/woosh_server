@@ -78,12 +78,12 @@ const staffController = {
   },
 
   createStaff: async (req, res) => {
-    const { name, photo_url, empl_no, id_no, role, phone_number, department, department_id, business_email, department_email, salary, employment_type, gender } = req.body;
+    const { name, photo_url, empl_no, id_no, role, designation, phone_number, department, department_id, business_email, department_email, salary, employment_type, gender } = req.body;
     
     try {
       const [result] = await db.query(
-        'INSERT INTO staff (name, photo_url, empl_no, id_no, role, phone_number, department, department_id, business_email, department_email, salary, employment_type, gender) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [name, photo_url, empl_no, id_no, role, phone_number, department, department_id, business_email, department_email, salary, employment_type, gender]
+        'INSERT INTO staff (name, photo_url, empl_no, id_no, role, designation, phone_number, department, department_id, business_email, department_email, salary, employment_type, gender) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [name, photo_url, empl_no, id_no, role, designation, phone_number, department, department_id, business_email, department_email, salary, employment_type, gender]
       );
       
       // Get the created staff with department info
@@ -105,12 +105,12 @@ const staffController = {
   },
 
   updateStaff: async (req, res) => {
-    const { name, photo_url, empl_no, id_no, role, phone_number, department, department_id, business_email, department_email, salary, employment_type, gender } = req.body;
+    const { name, photo_url, empl_no, id_no, role, designation, phone_number, department, department_id, business_email, department_email, salary, employment_type, gender } = req.body;
     
     try {
       await db.query(
-        'UPDATE staff SET name = ?, photo_url = ?, empl_no = ?, id_no = ?, role = ?, phone_number = ?, department = ?, department_id = ?, business_email = ?, department_email = ?, salary = ?, employment_type = ?, gender = ? WHERE id = ?',
-        [name, photo_url, empl_no, id_no, role, phone_number, department, department_id, business_email, department_email, salary, employment_type, gender, req.params.id]
+        'UPDATE staff SET name = ?, photo_url = ?, empl_no = ?, id_no = ?, role = ?, designation = ?, phone_number = ?, department = ?, department_id = ?, business_email = ?, department_email = ?, salary = ?, employment_type = ?, gender = ? WHERE id = ?',
+        [name, photo_url, empl_no, id_no, role, designation, phone_number, department, department_id, business_email, department_email, salary, employment_type, gender, req.params.id]
       );
       
       // Get the updated staff with department info

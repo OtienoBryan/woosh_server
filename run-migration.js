@@ -1,43 +1,33 @@
-const db = require('./database/db');
+const mysql = require('mysql2/promise');
+require('dotenv').config();
 
 async function runMigration() {
+  const connection = await mysql.createConnection({
+    host: process.env.DB_HOST || 'localhost',
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || '',
+    database: process.env.DB_NAME || 'woosh_finance'
+  });
+
   try {
-    console.log('Starting migration: add tax columns to purchase_order_items and invoice_number to purchase_orders...');
-    // Check columns
-    const [columns] = await db.query('DESCRIBE purchase_order_items');
-    const hasTaxAmount = columns.some(c => c.Field === 'tax_amount');
-    const hasTaxType = columns.some(c => c.Field === 'tax_type');
-
-    if (!hasTaxAmount) {
-      await db.query('ALTER TABLE purchase_order_items ADD COLUMN tax_amount DECIMAL(15,2) DEFAULT 0');
-      console.log('✓ Added tax_amount');
-    } else {
-      console.log('tax_amount already exists');
-    }
-
-    if (!hasTaxType) {
-      await db.query("ALTER TABLE purchase_order_items ADD COLUMN tax_type VARCHAR(20) NULL");
-      console.log('✓ Added tax_type');
-    } else {
-      console.log('tax_type already exists');
-    }
-
-    // Add invoice_number to purchase_orders if missing
-    const [poColumns] = await db.query('DESCRIBE purchase_orders');
-    const hasInvoiceNumber = poColumns.some(c => c.Field === 'invoice_number');
-    if (!hasInvoiceNumber) {
-      await db.query('ALTER TABLE purchase_orders ADD COLUMN invoice_number VARCHAR(50) NULL AFTER po_number');
-      console.log('✓ Added purchase_orders.invoice_number');
-    } else {
-      console.log('purchase_orders.invoice_number already exists');
-    }
-
-    console.log('✓ Migration completed successfully');
-    process.exit(0);
+    console.log('Adding start_date and end_date columns to documents table...');
+    
+    await connection.execute(`
+      ALTER TABLE documents 
+      ADD COLUMN start_date DATE NULL,
+      ADD COLUMN end_date DATE NULL
+    `);
+    
+    console.log('✅ Migration completed successfully!');
   } catch (error) {
-    console.error('Migration failed:', error);
-    process.exit(1);
+    if (error.code === 'ER_DUP_FIELDNAME') {
+      console.log('⚠️  Columns already exist, skipping migration.');
+    } else {
+      console.error('❌ Migration failed:', error.message);
+    }
+  } finally {
+    await connection.end();
   }
 }
 
-runMigration(); 
+runMigration();

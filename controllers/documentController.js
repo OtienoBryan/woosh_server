@@ -11,7 +11,7 @@ const documentController = {
       console.log('📤 Request body:', req.body);
       console.log('📤 Request file:', req.file ? 'File present' : 'No file');
       
-      const { title, category, description } = req.body;
+      const { title, category, description, start_date, end_date } = req.body;
       if (!title || !category || !req.file) {
         console.log('❌ Missing required fields:', { title: !!title, category: !!category, file: !!req.file });
         return res.status(400).json({ message: 'Title, category, and file are required.' });
@@ -92,10 +92,15 @@ const documentController = {
       }
       
       // Save metadata to DB
-      console.log('💾 Saving to database:', { title, category, fileUrl, description });
+      console.log('💾 Saving to database:', { title, category, fileUrl, description, start_date, end_date });
+      
+      // Convert date strings to proper date format (YYYY-MM-DD) or null
+      const startDateValue = start_date && start_date.trim() !== '' ? start_date : null;
+      const endDateValue = end_date && end_date.trim() !== '' ? end_date : null;
+      
       await db.query(
-        'INSERT INTO documents (title, category, file_url, description, uploaded_at) VALUES (?, ?, ?, ?, NOW())',
-        [title, category, fileUrl, description || null]
+        'INSERT INTO documents (title, category, file_url, description, start_date, end_date, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, NOW())',
+        [title, category, fileUrl, description || null, startDateValue, endDateValue]
       );
       
       console.log('✅ Document saved to database successfully');
@@ -107,7 +112,7 @@ const documentController = {
   },
   getAllDocuments: async (req, res) => {
     try {
-      const [rows] = await db.query('SELECT id, title, category, file_url, description, uploaded_at FROM documents ORDER BY uploaded_at DESC');
+      const [rows] = await db.query('SELECT id, title, category, file_url, description, start_date, end_date, uploaded_at FROM documents ORDER BY uploaded_at DESC');
       res.json(rows);
     } catch (error) {
       res.status(500).json({ message: 'Failed to fetch documents', error: error.message });

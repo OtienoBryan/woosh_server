@@ -130,6 +130,7 @@ router.post('/purchase-orders/:purchaseOrderId/receive', purchaseOrderController
 // Sales Orders Routes
 router.get('/sales-orders', salesOrderController.getAllSalesOrders);
 router.get('/sales-orders-all', salesOrderController.getAllSalesOrdersIncludingDrafts);
+router.get('/sales-orders/current-month-data', salesOrderController.getCurrentMonthSalesData);
 router.post('/sales-orders', (req, res, next) => {
   console.log('=== SALES ORDERS ROUTE HIT ===');
   console.log('Method:', req.method);

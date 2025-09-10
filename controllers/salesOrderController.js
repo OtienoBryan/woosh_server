@@ -1122,6 +1122,85 @@ const salesOrderController = {
     } finally {
       connection.release();
     }
+  },
+
+  // Get current month sales data for graph
+  getCurrentMonthSalesData: async (req, res) => {
+    try {
+      console.log('Fetching current month sales data for graph...');
+      
+      // Get current month sales data grouped by day
+      const [rows] = await db.query(`
+        SELECT 
+          DATE(order_date) as date,
+          COUNT(*) as order_count,
+          COALESCE(SUM(total_amount), 0) as total_amount,
+          COALESCE(SUM(subtotal), 0) as subtotal,
+          COALESCE(SUM(tax_amount), 0) as tax_amount
+        FROM sales_orders 
+        WHERE status IN ('delivered', 'confirmed', 'shipped')
+        AND MONTH(order_date) = MONTH(CURDATE()) 
+        AND YEAR(order_date) = YEAR(CURDATE())
+        GROUP BY DATE(order_date)
+        ORDER BY DATE(order_date) ASC
+      `);
+
+      // Get current month summary
+      const [summaryRows] = await db.query(`
+        SELECT 
+          COUNT(*) as total_orders,
+          COALESCE(SUM(total_amount), 0) as total_sales,
+          COALESCE(AVG(total_amount), 0) as avg_order_value,
+          MIN(order_date) as first_order_date,
+          MAX(order_date) as last_order_date
+        FROM sales_orders 
+        WHERE status IN ('delivered', 'confirmed', 'shipped')
+        AND MONTH(order_date) = MONTH(CURDATE()) 
+        AND YEAR(order_date) = YEAR(CURDATE())
+      `);
+
+      // Get previous month for comparison
+      const [prevMonthRows] = await db.query(`
+        SELECT 
+          COALESCE(SUM(total_amount), 0) as total_sales
+        FROM sales_orders 
+        WHERE status IN ('delivered', 'confirmed', 'shipped')
+        AND MONTH(order_date) = MONTH(CURDATE()) - 1 
+        AND YEAR(order_date) = YEAR(CURDATE())
+      `);
+
+      const currentMonthSales = summaryRows[0].total_sales;
+      const previousMonthSales = prevMonthRows[0].total_sales;
+      const growthPercentage = previousMonthSales > 0 
+        ? ((currentMonthSales - previousMonthSales) / previousMonthSales) * 100 
+        : 0;
+
+      console.log('Current month sales data fetched successfully:', {
+        days: rows.length,
+        totalSales: currentMonthSales,
+        growthPercentage: growthPercentage
+      });
+
+      res.json({
+        success: true,
+        data: {
+          dailyData: rows,
+          summary: {
+            ...summaryRows[0],
+            growth_percentage: growthPercentage,
+            previous_month_sales: previousMonthSales
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error('Error fetching current month sales data:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to fetch current month sales data',
+        details: error.message
+      });
+    }
   }
 };
 

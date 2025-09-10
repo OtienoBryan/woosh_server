@@ -909,12 +909,11 @@ const salesOrderController = {
             expected_delivery_date = COALESCE(?, expected_delivery_date),
             notes = COALESCE(?, notes),
             subtotal = ?,
-            tax_amount = ?,
             total_amount = ?,
             so_number = CONCAT('INV-', ?),
             updated_at = NOW()
         WHERE id = ?
-      `, [expected_delivery_date, notes, subtotal, taxAmount, totalAmount, id, id]);
+      `, [expected_delivery_date, notes, subtotal, totalAmount, id, id]);
       
       console.log('Order updated to confirmed status');
       

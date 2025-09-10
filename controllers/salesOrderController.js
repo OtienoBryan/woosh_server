@@ -1201,7 +1201,103 @@ const salesOrderController = {
         details: error.message
       });
     }
+  },
+
+  // Get category performance data for pie chart
+  getCategoryPerformanceData: async (req, res) => {
+    try {
+      console.log('Fetching category performance data for pie chart...');
+      
+      // Get category performance data for current month
+      const [rows] = await db.query(`
+        SELECT 
+          p.category,
+          COUNT(DISTINCT soi.sales_order_id) as order_count,
+          SUM(soi.quantity) as total_quantity,
+          SUM(soi.total_price) as total_sales,
+          AVG(soi.total_price) as avg_sale_value
+        FROM sales_order_items soi
+        INNER JOIN sales_orders so ON soi.sales_order_id = so.id
+        INNER JOIN products p ON soi.product_id = p.id
+        WHERE so.status IN ('delivered', 'confirmed', 'shipped')
+        AND MONTH(so.order_date) = MONTH(CURDATE()) 
+        AND YEAR(so.order_date) = YEAR(CURDATE())
+        AND p.category IS NOT NULL 
+        AND p.category != ''
+        GROUP BY p.category
+        ORDER BY total_sales DESC
+      `);
+
+      // Get total sales for percentage calculation
+      const [totalSalesResult] = await db.query(`
+        SELECT SUM(soi.total_price) as total_sales
+        FROM sales_order_items soi
+        INNER JOIN sales_orders so ON soi.sales_order_id = so.id
+        INNER JOIN products p ON soi.product_id = p.id
+        WHERE so.status IN ('delivered', 'confirmed', 'shipped')
+        AND MONTH(so.order_date) = MONTH(CURDATE()) 
+        AND YEAR(so.order_date) = YEAR(CURDATE())
+        AND p.category IS NOT NULL 
+        AND p.category != ''
+      `);
+
+      const totalSales = totalSalesResult[0].total_sales || 0;
+
+      // Calculate percentages and format data for pie chart
+      const chartData = rows.map((row, index) => ({
+        name: row.category || 'Uncategorized',
+        value: parseFloat(row.total_sales),
+        percentage: totalSales > 0 ? ((row.total_sales / totalSales) * 100).toFixed(1) : 0,
+        orderCount: row.order_count,
+        totalQuantity: row.total_quantity,
+        avgSaleValue: parseFloat(row.avg_sale_value),
+        color: getCategoryColor(index)
+      }));
+
+      console.log('Category performance data fetched successfully:', {
+        categories: chartData.length,
+        totalSales: totalSales
+      });
+
+      res.json({
+        success: true,
+        data: {
+          chartData: chartData,
+          totalSales: totalSales,
+          summary: {
+            totalCategories: chartData.length,
+            topCategory: chartData.length > 0 ? chartData[0].name : null,
+            topCategoryPercentage: chartData.length > 0 ? chartData[0].percentage : 0
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error('Error fetching category performance data:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to fetch category performance data',
+        details: error.message
+      });
+    }
   }
 };
+
+// Helper function to assign colors to categories
+function getCategoryColor(index) {
+  const colors = [
+    '#3b82f6', // blue
+    '#10b981', // emerald
+    '#f59e0b', // amber
+    '#ef4444', // red
+    '#8b5cf6', // violet
+    '#06b6d4', // cyan
+    '#84cc16', // lime
+    '#f97316', // orange
+    '#ec4899', // pink
+    '#6b7280'  // gray
+  ];
+  return colors[index % colors.length];
+}
 
 module.exports = salesOrderController; 

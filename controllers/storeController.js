@@ -593,6 +593,17 @@ const storeController = {
       
       const { from_store_id, to_store_id, transfer_date, staff_id, reference, notes, items } = req.body;
       
+      // Convert transfer_date to include current time
+      const now = new Date();
+      const nairobiTime = new Date(now.toLocaleString("en-US", {timeZone: "Africa/Nairobi"}));
+      const year = nairobiTime.getFullYear();
+      const month = String(nairobiTime.getMonth() + 1).padStart(2, '0');
+      const day = String(nairobiTime.getDate()).padStart(2, '0');
+      const hours = String(nairobiTime.getHours()).padStart(2, '0');
+      const minutes = String(nairobiTime.getMinutes()).padStart(2, '0');
+      const seconds = String(nairobiTime.getSeconds()).padStart(2, '0');
+      const transferDateTime = `${transfer_date} ${hours}:${minutes}:${seconds}`;
+      
       // Validate required fields
       if (!from_store_id || !to_store_id || !transfer_date || !staff_id || !items) {
         console.log('❌ Missing required fields:', { from_store_id, to_store_id, transfer_date, staff_id, items: items ? 'present' : 'missing' });
@@ -695,7 +706,7 @@ const storeController = {
           `INSERT INTO inventory_transfers
             (from_store_id, to_store_id, product_id, quantity, transfer_date, staff_id, reference, notes)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [from_store_id, to_store_id, product_id, quantity, transfer_date, staff_id, reference, notes]
+          [from_store_id, to_store_id, product_id, quantity, transferDateTime, staff_id, reference, notes]
         );
         console.log(`✅ Transfer recorded in inventory_transfers`);
         
@@ -714,7 +725,7 @@ const storeController = {
           `INSERT INTO inventory_transactions
             (product_id, reference, amount_in, amount_out, balance, date_received, store_id, staff_id)
            VALUES (?, ?, 0, ?, ?, ?, ?, ?)`,
-          [product_id, reference || 'Stock Transfer', quantity, newOutBalance, transfer_date, from_store_id, staff_id]
+          [product_id, reference || 'Stock Transfer', quantity, newOutBalance, transferDateTime, from_store_id, staff_id]
         );
         console.log(`✅ Source store transaction recorded`);
         
@@ -733,7 +744,7 @@ const storeController = {
           `INSERT INTO inventory_transactions
             (product_id, reference, amount_in, amount_out, balance, date_received, store_id, staff_id)
            VALUES (?, ?, ?, 0, ?, ?, ?, ?)`,
-          [product_id, reference || 'Stock Transfer', quantity, newInBalance, transfer_date, to_store_id, staff_id]
+          [product_id, reference || 'Stock Transfer', quantity, newInBalance, transferDateTime, to_store_id, staff_id]
         );
         console.log(`✅ Destination store transaction recorded`);
       }
@@ -936,7 +947,17 @@ const storeController = {
       if (!store_id || !Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ success: false, error: 'Missing store_id or items' });
       }
-      const stockTakeDate = date || new Date().toISOString().split('T')[0];
+      
+      // Convert stock take date to include current time
+      const now = new Date();
+      const nairobiTime = new Date(now.toLocaleString("en-US", {timeZone: "Africa/Nairobi"}));
+      const year = nairobiTime.getFullYear();
+      const month = String(nairobiTime.getMonth() + 1).padStart(2, '0');
+      const day = String(nairobiTime.getDate()).padStart(2, '0');
+      const hours = String(nairobiTime.getHours()).padStart(2, '0');
+      const minutes = String(nairobiTime.getMinutes()).padStart(2, '0');
+      const seconds = String(nairobiTime.getSeconds()).padStart(2, '0');
+      const stockTakeDate = date ? `${date} ${hours}:${minutes}:${seconds}` : `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
       // Insert stock_takes event
       const [stockTakeResult] = await dbConnection.query(
         `INSERT INTO stock_takes (store_id, staff_id, take_date, notes) VALUES (?, ?, ?, ?)`,

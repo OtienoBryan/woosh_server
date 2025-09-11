@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const db = require('../database/db');
+const cloudinary = require('cloudinary').v2;
 
 // Simple JWT auth middleware
 function authenticateToken(req, res, next) {
@@ -150,9 +151,10 @@ router.post('/sales-orders/:id/complete-delivery', async (req, res) => {
   
   try {
     const { id } = req.params;
-    const { recipient_name, recipient_phone, notes } = req.body;
+    const { recipient_name, recipient_phone, notes, delivery_image_filename } = req.body;
     
     console.log('Processing delivery completion for order:', id);
+    console.log('Delivery image filename:', delivery_image_filename);
     
     if (!recipient_name || !recipient_phone) {
       console.log('Missing required fields:', { recipient_name, recipient_phone });
@@ -165,9 +167,10 @@ router.post('/sales-orders/:id/complete-delivery', async (req, res) => {
       SET my_status = 3, 
           status = 'delivered',
           delivery_notes = ?,
+          delivery_image = ?,
           updated_at = NOW()
       WHERE id = ?
-    `, [`Delivered to: ${recipient_name} (${recipient_phone}). ${notes || ''}`, id]);
+    `, [`Delivered to: ${recipient_name} (${recipient_phone}). ${notes || ''}`, delivery_image_filename || null, id]);
 
     console.log('Update result:', updateResult);
 
@@ -189,7 +192,7 @@ router.delete('/sales-orders/:id', salesOrderController.deleteSalesOrder);
 router.patch('/sales-orders/:id', salesOrderController.assignRider);
 
 // Add POST route for uploading delivery images
-router.post('/upload-delivery-image', uploadProductImageMulter.single('delivery_image'), (req, res) => {
+router.post('/upload-delivery-image', uploadProductImageMulter.single('delivery_image'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No image file provided' });
@@ -201,17 +204,40 @@ router.post('/upload-delivery-image', uploadProductImageMulter.single('delivery_
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // Here you would typically save the image path to the database
-    // For now, we'll just return success
-    res.json({ 
-      success: true, 
-      message: 'Delivery image uploaded successfully',
-      filename: req.file.filename,
-      order_id,
-      recipient_name,
-      recipient_phone,
-      notes
-    });
+    try {
+      // Convert buffer to base64 for Cloudinary
+      const b64 = Buffer.from(req.file.buffer).toString('base64');
+      const dataURI = `data:${req.file.mimetype};base64,${b64}`;
+      
+      // Upload to Cloudinary
+      const result = await cloudinary.uploader.upload(dataURI, {
+        folder: 'delivery_images',
+        public_id: `delivery_${order_id}_${Date.now()}`,
+        resource_type: 'auto'
+      });
+
+      res.json({ 
+        success: true, 
+        message: 'Delivery image uploaded successfully',
+        filename: result.secure_url,
+        order_id,
+        recipient_name,
+        recipient_phone,
+        notes
+      });
+    } catch (cloudinaryError) {
+      console.error('Cloudinary upload error:', cloudinaryError);
+      // Fallback to local storage if Cloudinary fails
+      res.json({ 
+        success: true, 
+        message: 'Delivery image uploaded successfully (local storage)',
+        filename: req.file.filename,
+        order_id,
+        recipient_name,
+        recipient_phone,
+        notes
+      });
+    }
   } catch (error) {
     console.error('Error uploading delivery image:', error);
     res.status(500).json({ error: 'Failed to upload delivery image' });

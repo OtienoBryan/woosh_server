@@ -198,13 +198,43 @@ const deliveryNoteController = {
     try {
       const { id } = req.params;
       
-      await db.query(`
-        UPDATE delivery_notes 
-        SET status = 'delivered', my_status = 3, delivered_at = NOW(), updated_at = NOW()
-        WHERE id = ?
-      `, [id]);
+      // Start a transaction to update both delivery note and sales order
+      const connection = await db.getConnection();
+      await connection.beginTransaction();
       
-      res.json({ success: true, message: 'Delivery note marked as delivered' });
+      try {
+        // Get the sales_order_id from the delivery note
+        const [deliveryNote] = await connection.query(
+          'SELECT sales_order_id FROM delivery_notes WHERE id = ?', 
+          [id]
+        );
+        
+        if (!deliveryNote || !deliveryNote.sales_order_id) {
+          throw new Error('Delivery note not found or no associated sales order');
+        }
+        
+        // Update delivery note status
+        await connection.query(`
+          UPDATE delivery_notes 
+          SET status = 'delivered', my_status = 3, delivered_at = NOW(), updated_at = NOW()
+          WHERE id = ?
+        `, [id]);
+        
+        // Update corresponding sales order status to delivered
+        await connection.query(`
+          UPDATE sales_orders 
+          SET status = 'delivered', my_status = 3, updated_at = NOW()
+          WHERE id = ?
+        `, [deliveryNote.sales_order_id]);
+        
+        await connection.commit();
+        res.json({ success: true, message: 'Delivery note and sales order marked as delivered' });
+      } catch (error) {
+        await connection.rollback();
+        throw error;
+      } finally {
+        connection.release();
+      }
     } catch (error) {
       console.error('Error marking as delivered:', error);
       res.status(500).json({ success: false, error: 'Failed to mark as delivered' });

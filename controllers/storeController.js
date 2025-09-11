@@ -377,7 +377,7 @@ const storeController = {
   // Get inventory transactions for a product or store
   getInventoryTransactions: async (req, res) => {
     try {
-      const { product_id, store_id, page = 1, limit = 50 } = req.query;
+      const { product_id, store_id, page = 1, limit = 50, orderBy = 'id', orderDirection = 'DESC' } = req.query;
       let sql = 'SELECT it.*, p.product_name, s.store_name, st.name as staff_name FROM inventory_transactions it LEFT JOIN products p ON it.product_id = p.id LEFT JOIN stores s ON it.store_id = s.id LEFT JOIN staff st ON it.staff_id = st.id WHERE 1=1';
       const params = [];
       if (product_id) {
@@ -388,7 +388,17 @@ const storeController = {
         sql += ' AND it.store_id = ?';
         params.push(store_id);
       }
-      sql += ' ORDER BY it.date_received DESC, it.id DESC';
+      
+      // Add ordering
+      const validOrderBy = ['id', 'date_received', 'product_id', 'amount_in', 'amount_out', 'balance'];
+      const validDirection = ['ASC', 'DESC'];
+      const orderColumn = validOrderBy.includes(orderBy) ? orderBy : 'id';
+      const orderDir = validDirection.includes(orderDirection.toUpperCase()) ? orderDirection.toUpperCase() : 'DESC';
+      
+      sql += ` ORDER BY it.${orderColumn} ${orderDir}`;
+      if (orderColumn !== 'id') {
+        sql += ', it.id DESC'; // Secondary sort by ID for consistent ordering
+      }
       // Pagination
       const pageNum = parseInt(page, 10) || 1;
       const pageSize = parseInt(limit, 10) || 50;

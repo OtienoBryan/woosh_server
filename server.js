@@ -130,6 +130,7 @@ app.use('/uploads', express.static('uploads'));
 app.use('/uploads/contracts', express.static(path.join(__dirname, 'uploads', 'contracts')));
 app.use('/uploads/termination_letters', express.static(path.join(__dirname, 'uploads', 'termination_letters')));
 app.use('/uploads/warning_letters', express.static(path.join(__dirname, 'uploads', 'warning_letters')));
+app.use('/uploads/products', express.static(path.join(__dirname, 'uploads', 'products')));
 
 // Register all specific endpoints FIRST
 app.use('/api/my-visibility-reports', myVisibilityReportRoutes);

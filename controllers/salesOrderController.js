@@ -762,26 +762,115 @@ const salesOrderController = {
 
   // Assign a rider to a sales order
   assignRider: async (req, res) => {
+    const connection = await db.getConnection();
     try {
+      await connection.beginTransaction();
+      
       const { id } = req.params;
       const { riderId } = req.body;
       if (!riderId) {
         return res.status(400).json({ success: false, error: 'riderId is required' });
       }
+      
       // Check if sales order exists
-      const [existingSO] = await db.query('SELECT id FROM sales_orders WHERE id = ?', [id]);
+      const [existingSO] = await connection.query('SELECT id FROM sales_orders WHERE id = ?', [id]);
       if (existingSO.length === 0) {
         return res.status(404).json({ success: false, error: 'Sales order not found' });
       }
+
+      // Use store ID = 1 for stock reduction
+      const deltaCornerStoreId = 1;
+      console.log('Using store ID 1 for stock reduction');
+
       // Get the current user ID from the request
       const currentUserId = req.user?.id || 1; // Default to user ID 1 if not available
-      // Update the sales order with the rider ID, set my_status to 2, assigned_at to now, and dispatched_by to current user
+
+      // Get sales order items to reduce stock
+      const [orderItems] = await connection.query(
+        'SELECT product_id, quantity FROM sales_order_items WHERE sales_order_id = ?',
+        [id]
+      );
+
+      console.log('Order items to process:', orderItems);
+
+      // Reduce stock quantities in Delta Corner Store
+      for (const item of orderItems) {
+        const { product_id, quantity } = item;
+        
+        // Get current balance BEFORE updating store inventory
+        const [existingInventory] = await connection.query(
+          'SELECT id, quantity FROM store_inventory WHERE store_id = ? AND product_id = ?',
+          [deltaCornerStoreId, product_id]
+        );
+        
+        const currentQuantity = existingInventory.length > 0 ? existingInventory[0].quantity : 0;
+        const newQuantity = Math.max(0, currentQuantity - quantity); // Ensure quantity doesn't go below 0
+        
+        // Record inventory transaction for audit trail (using current balance before reduction)
+        const transactionReference = `SO-${id}`;
+        const transactionDate = new Date().toISOString().split('T')[0];
+        
+        // Get product cost for transaction record
+        const [productInfo] = await connection.query(
+          'SELECT cost_price FROM products WHERE id = ?',
+          [product_id]
+        );
+        const unitCost = productInfo.length > 0 ? productInfo[0].cost_price : 0;
+        const totalCost = quantity * unitCost;
+        
+        // Use current quantity as previous balance, new quantity as new balance
+        const previousBalance = currentQuantity;
+        const newBalance = newQuantity;
+
+        if (existingInventory.length > 0) {
+          await connection.query(
+            'UPDATE store_inventory SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE store_id = ? AND product_id = ?',
+            [newQuantity, deltaCornerStoreId, product_id]
+          );
+          
+          console.log(`Reduced stock for product ${product_id} in store ID 1: ${currentQuantity} -> ${newQuantity}`);
+        } else {
+          // Product doesn't exist in store inventory, create with negative quantity (stock out)
+          await connection.query(
+            'INSERT INTO store_inventory (store_id, product_id, quantity, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
+            [deltaCornerStoreId, product_id, newQuantity]
+          );
+          console.log(`Created inventory record for product ${product_id} in store ID 1 with quantity: ${newQuantity} (stock out)`);
+        }
+        
+        // Get current date and time in Nairobi timezone
+        const now = new Date();
+        const nairobiTime = new Date(now.toLocaleString("en-US", {timeZone: "Africa/Nairobi"}));
+        const year = nairobiTime.getFullYear();
+        const month = String(nairobiTime.getMonth() + 1).padStart(2, '0');
+        const day = String(nairobiTime.getDate()).padStart(2, '0');
+        const hours = String(nairobiTime.getHours()).padStart(2, '0');
+        const minutes = String(nairobiTime.getMinutes()).padStart(2, '0');
+        const seconds = String(nairobiTime.getSeconds()).padStart(2, '0');
+        const dateReceived = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+        
+        await connection.query(
+          `INSERT INTO inventory_transactions 
+            (product_id, reference, amount_in, amount_out, unit_cost, total_cost, balance, date_received, staff_id, store_id)
+           VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
+          [product_id, transactionReference, quantity, unitCost, totalCost, newBalance, dateReceived, currentUserId, deltaCornerStoreId]
+        );
+        
+        console.log(`Recorded inventory transaction: Product ${product_id}, Out: ${quantity}, Balance: ${newBalance}`);
+      }
+      
+      // Update the sales order with the rider ID, set my_status to 2, status to shipped, assigned_at to now, and dispatched_by to current user
       const now = new Date();
-      await db.query('UPDATE sales_orders SET rider_id = ?, my_status = 2, assigned_at = ?, dispatched_by = ? WHERE id = ?', [riderId, now, currentUserId, id]);
-      res.json({ success: true, message: 'Rider assigned successfully' });
+      await connection.query('UPDATE sales_orders SET rider_id = ?, my_status = 2, status = ?, assigned_at = ?, dispatched_by = ? WHERE id = ?', [riderId, 'shipped', now, currentUserId, id]);
+      
+      await connection.commit();
+      res.json({ success: true, message: 'Rider assigned successfully, status updated to shipped, and stock reduced in store ID 1' });
     } catch (error) {
+      await connection.rollback();
       console.error('Error assigning rider:', error);
       res.status(500).json({ success: false, error: 'Failed to assign rider' });
+    } finally {
+      connection.release();
     }
   },
 

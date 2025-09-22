@@ -584,6 +584,9 @@ const storeController = {
     let dbConnection;
     try {
       console.log('🚀 Starting stock transfer with data:', JSON.stringify(req.body, null, 2));
+      console.log('🔍 Request method:', req.method);
+      console.log('🔍 Request URL:', req.url);
+      console.log('🔍 Request headers:', req.headers);
       
       dbConnection = await connection.getConnection();
       console.log('✅ Database connection acquired');
@@ -702,6 +705,16 @@ const storeController = {
         
         // Record in inventory_transfers
         console.log(`📝 Recording transfer in inventory_transfers table`);
+        console.log(`📊 Insert data:`, {
+          from_store_id,
+          to_store_id,
+          product_id,
+          quantity,
+          transferDateTime,
+          staff_id,
+          reference,
+          notes
+        });
         await dbConnection.query(
           `INSERT INTO inventory_transfers
             (from_store_id, to_store_id, product_id, quantity, transfer_date, staff_id, reference, notes)

@@ -447,11 +447,36 @@ const purchaseOrderController = {
         );
       }
 
-      // Calculate total value received for this receipt
+      // Calculate total value received for this receipt (tax-exclusive)
       let totalReceiptValue = 0;
       for (const item of items) {
         totalReceiptValue += item.received_quantity * item.unit_cost;
       }
+
+      // Calculate tax amount for received items
+      // Get the purchase order items to determine tax type and calculate tax
+      const [poItems] = await connection.query(`
+        SELECT product_id, tax_type, tax_amount, quantity, unit_price 
+        FROM purchase_order_items 
+        WHERE purchase_order_id = ?
+      `, [purchaseOrderId]);
+
+      let totalTaxAmount = 0;
+      for (const receivedItem of items) {
+        // Find matching PO item
+        const poItem = poItems.find(poi => poi.product_id === receivedItem.product_id);
+        if (poItem) {
+          const taxType = poItem.tax_type || '16%';
+          const taxRate = taxType === '16%' ? 0.16 : 0;
+          // Calculate tax on the received quantity at the unit cost
+          const itemTaxExclusiveAmount = receivedItem.received_quantity * receivedItem.unit_cost;
+          const itemTaxAmount = itemTaxExclusiveAmount * taxRate;
+          totalTaxAmount += itemTaxAmount;
+        }
+      }
+
+      // Total amount including tax for accounts payable and supplier ledger
+      const totalAmountWithTax = totalReceiptValue + totalTaxAmount;
 
       // Get supplier_id from purchase order
       const supplier_id = purchaseOrders[0].supplier_id;
@@ -463,14 +488,14 @@ const purchaseOrderController = {
         await connection.query('UPDATE purchase_orders SET invoice_number = ? WHERE id = ?', [invRef, purchaseOrderId]);
       }
 
-      // Insert into supplier_ledger (credit, increases balance)
+      // Insert into supplier_ledger (credit, increases balance) - use total with tax
       // Get last running balance
       const [lastLedger] = await connection.query(
         'SELECT running_balance FROM supplier_ledger WHERE supplier_id = ? ORDER BY date DESC, id DESC LIMIT 1',
         [supplier_id]
       );
       const prevBalance = lastLedger.length > 0 ? parseFloat(lastLedger[0].running_balance) : 0;
-      const newBalance = prevBalance + totalReceiptValue;
+      const newBalance = prevBalance + totalAmountWithTax;
       await connection.query(
         `INSERT INTO supplier_ledger (supplier_id, date, description, reference_type, reference_id, debit, credit, running_balance)
          VALUES (?, NOW(), ?, ?, ?, ?, ?, ?)`,
@@ -480,7 +505,7 @@ const purchaseOrderController = {
           'purchase_order',
           purchaseOrderId,
           0,
-          totalReceiptValue,
+          totalAmountWithTax,
           newBalance
         ]
       );
@@ -494,7 +519,7 @@ const purchaseOrderController = {
         [po_number]
       );
 
-      // Create a journal entry: Debit Inventory, Credit Accounts Payable
+      // Create a journal entry: Debit Inventory (tax-exclusive), Debit Purchase Tax Control, Credit Accounts Payable (total with tax)
       // Get account IDs
       const [inventoryAccount] = await connection.query(
         `SELECT id FROM chart_of_accounts WHERE account_code = '100001' LIMIT 1`
@@ -502,8 +527,11 @@ const purchaseOrderController = {
       const [apAccount] = await connection.query(
         `SELECT id FROM chart_of_accounts WHERE account_code = '210000' LIMIT 1`
       );
+      // Purchase Tax Control Account ID (as per financialController.js)
+      const vatAccountId = 16;
+
       if (inventoryAccount.length && apAccount.length) {
-        // Create journal entry
+        // Create journal entry with total including tax
         const [journalResult] = await connection.query(
           `INSERT INTO journal_entries (entry_number, entry_date, reference, description, total_debit, total_credit, status, created_by)
            VALUES (?, CURDATE(), ?, ?, ?, ?, 'posted', ?)`,
@@ -511,24 +539,59 @@ const purchaseOrderController = {
             `JE-PO-${purchaseOrderId}-${Date.now()}`,
             po_number,
             `Goods received for PO ${po_number}`,
-            totalReceiptValue,
-            totalReceiptValue,
+            totalAmountWithTax,
+            totalAmountWithTax,
             1 // created_by (system/admin)
           ]
         );
         const journalEntryId = journalResult.insertId;
-        // Debit Inventory
+        
+        // Debit Inventory (tax-exclusive amount)
         await connection.query(
           `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
            VALUES (?, ?, ?, 0, ?)`,
-          [journalEntryId, inventoryAccount[0].id, totalReceiptValue, `Goods received for PO ${po_number}`]
+          [journalEntryId, inventoryAccount[0].id, totalReceiptValue, `Inventory - Goods received for PO ${po_number}`]
         );
-        // Credit Accounts Payable
+        
+        // Debit Purchase Tax Control (tax amount) if there's tax
+        if (totalTaxAmount > 0) {
+          await connection.query(
+            `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
+             VALUES (?, ?, ?, 0, ?)`,
+            [journalEntryId, vatAccountId, totalTaxAmount, `Purchase Tax Control - PO ${po_number}`]
+          );
+        }
+        
+        // Credit Accounts Payable (total with tax)
         await connection.query(
           `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
            VALUES (?, ?, 0, ?, ?)`,
-          [journalEntryId, apAccount[0].id, totalReceiptValue, `Goods received for PO ${po_number}`]
+          [journalEntryId, apAccount[0].id, totalAmountWithTax, `Accounts Payable - Goods received for PO ${po_number}`]
         );
+
+        // Update account_ledger for Purchase Tax Control Account (debit, increases tax control)
+        if (totalTaxAmount > 0) {
+          const [lastVatLedger] = await connection.query(
+            'SELECT running_balance FROM account_ledger WHERE account_id = ? ORDER BY date DESC, id DESC LIMIT 1',
+            [vatAccountId]
+          );
+          const prevVatBalance = lastVatLedger.length > 0 ? parseFloat(lastVatLedger[0].running_balance) : 0;
+          const newVatBalance = prevVatBalance + totalTaxAmount;
+          
+          await connection.query(
+            `INSERT INTO account_ledger (account_id, date, description, reference_type, reference_id, debit, credit, running_balance, status)
+             VALUES (?, CURDATE(), ?, ?, ?, ?, ?, ?, 'confirmed')`,
+            [
+              vatAccountId,
+              `Purchase Tax Control - PO ${po_number}`,
+              'purchase_order',
+              journalEntryId,
+              totalTaxAmount,
+              0,
+              newVatBalance
+            ]
+          );
+        }
       }
 
       await connection.commit();

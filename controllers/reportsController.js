@@ -224,7 +224,10 @@ const reportsController = {
             CASE 
               WHEN coa.account_type = 1 AND coa.account_code = '1500' THEN jel.credit_amount - jel.debit_amount
               WHEN coa.account_type = 1 THEN jel.debit_amount - jel.credit_amount
-              WHEN coa.account_type = 2 THEN jel.debit_amount - jel.credit_amount
+              WHEN coa.account_type = 6 THEN jel.debit_amount - jel.credit_amount
+              WHEN coa.account_type = 7 THEN jel.debit_amount - jel.credit_amount
+              WHEN coa.account_type = 9 THEN jel.debit_amount - jel.credit_amount
+              WHEN coa.account_type = 2 THEN jel.credit_amount - jel.debit_amount
               WHEN coa.account_type = 13 THEN jel.credit_amount - jel.debit_amount
               ELSE jel.credit_amount - jel.debit_amount
             END
@@ -248,7 +251,10 @@ const reportsController = {
               CASE 
                 WHEN coa.account_type = 1 AND coa.account_code = '1500' THEN jel.credit_amount - jel.debit_amount
                 WHEN coa.account_type = 1 THEN jel.debit_amount - jel.credit_amount
-                WHEN coa.account_type = 2 THEN jel.debit_amount - jel.credit_amount
+                WHEN coa.account_type = 6 THEN jel.debit_amount - jel.credit_amount
+                WHEN coa.account_type = 7 THEN jel.debit_amount - jel.credit_amount
+                WHEN coa.account_type = 9 THEN jel.debit_amount - jel.credit_amount
+                WHEN coa.account_type = 2 THEN jel.credit_amount - jel.debit_amount
                 WHEN coa.account_type = 13 THEN jel.credit_amount - jel.debit_amount
                 ELSE jel.credit_amount - jel.debit_amount
               END
@@ -272,12 +278,19 @@ const reportsController = {
       `);
       const unpaidAssetsValue = parseFloat(unpaidAssetsResult[0].unpaid_assets_value || 0);
 
+      // Calculate physical inventory value for reference (not added to balance sheet to avoid double-counting)
       const [inventoryValueResult] = await db.query(`
         SELECT COALESCE(SUM(si.quantity * p.cost_price), 0) AS total_inventory_value
         FROM store_inventory si
         LEFT JOIN products p ON si.product_id = p.id
       `);
       const inventoryValue = parseFloat(inventoryValueResult[0].total_inventory_value || 0);
+      
+      // Check if there are inventory accounts (excluding stock type 6 which we're not using)
+      const hasInventoryAccounts = accountsResult.some(a => 
+        (a.account_type === 1 && a.account_code === '100001') ||
+        (a.account_type === 1 && a.account_name.toLowerCase().includes('inventory'))
+      );
 
       const [payablesResult] = await db.query(`
         SELECT COALESCE(SUM(credit - debit), 0) as totalPayables
@@ -332,7 +345,6 @@ const reportsController = {
                 account.account_name.toLowerCase().includes('bank') ||
                 account.account_name.toLowerCase().includes('receivable') ||
                 account.account_name.toLowerCase().includes('inventory') ||
-                account.account_name.toLowerCase().includes('stock') ||
                 account.account_name.toLowerCase().includes('debtors control')) {
               categorized.current.push(accountData);
             } else if (['1400', '1500'].includes(account.account_code) ||
@@ -373,8 +385,7 @@ const reportsController = {
       const cashAndEquivalents = accountsResult.filter(a => a.account_type === 9);
       // --- Add this: get all accounts receivable ---
       const accountsReceivable = accountsResult.filter(a => a.account_type === 2);
-      // --- Add this: get stock and debtors control accounts ---
-      const stockAccounts = accountsResult.filter(a => a.account_type === 6);
+      // --- Get debtors control accounts (we're NOT using stock accounts type 6) ---
       const debtorsControlAccounts = accountsResult.filter(a => a.account_type === 7);
 
       // Add additional data sources to appropriate categories
@@ -386,13 +397,12 @@ const reportsController = {
         ...accountsReceivable.filter(
           ar => !assets.some(a => a.id === ar.id) && !cashAndEquivalents.some(ca => ca.id === ar.id)
         ),
-        ...stockAccounts.filter(
-          stock => !assets.some(a => a.id === stock.id) && !cashAndEquivalents.some(ca => ca.id === stock.id) && !accountsReceivable.some(ar => ar.id === stock.id)
-        ),
         ...debtorsControlAccounts.filter(
-          debtors => !assets.some(a => a.id === debtors.id) && !cashAndEquivalents.some(ca => ca.id === debtors.id) && !accountsReceivable.some(ar => ar.id === debtors.id) && !stockAccounts.some(stock => stock.id === debtors.id)
+          debtors => !assets.some(a => a.id === debtors.id) && !cashAndEquivalents.some(ca => ca.id === debtors.id) && !accountsReceivable.some(ar => ar.id === debtors.id)
         ),
-        ...(inventoryValue > 0 ? [{
+        // Add physical inventory value from store inventory (stock accounts type 6 are not used)
+        // Only add if there are no existing inventory accounts to prevent double-counting
+        ...(inventoryValue > 0 && !hasInventoryAccounts ? [{
           id: 1300,
           account_code: '1300',
           account_name: 'Inventory (from store inventory)',
@@ -566,7 +576,9 @@ const reportsController = {
         {
           id: 3,
           title: "Inventory Valuation",
-          content: `Inventory is valued at cost using the weighted average method. Total inventory value as of ${as_of_date || 'current date'}: ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(inventoryValue)}`
+          content: hasInventoryAccounts 
+            ? `Inventory is tracked through accounting journal entries. Inventory accounts show balances from transaction records. Physical inventory value: ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(inventoryValue)}`
+            : `Inventory is valued at cost using the weighted average method, calculated from store inventory (quantity × cost price). Total inventory value as of ${as_of_date || 'current date'}: ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(inventoryValue)}`
         },
         {
           id: 4,

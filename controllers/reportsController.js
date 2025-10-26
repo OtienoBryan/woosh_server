@@ -1703,6 +1703,110 @@ const reportsController = {
       console.error('Error fetching sales tax report:', error);
       res.status(500).json({ success: false, error: 'Failed to fetch sales tax report' });
     }
+  },
+
+  // Get Trial Balance Report
+  getTrialBalanceReport: async (req, res) => {
+    try {
+      const { as_of_date } = req.query;
+      const dateFilter = as_of_date ? 'AND je.entry_date <= ?' : 'AND je.entry_date <= CURDATE()';
+      const params = as_of_date ? [as_of_date] : [];
+      const reportDate = as_of_date || new Date().toISOString().split('T')[0];
+
+      // Get account type names mapping
+      const accountTypeNames = {
+        1: 'Asset',
+        2: 'Fixed Asset',
+        3: 'Liability',
+        4: 'Revenue',
+        5: 'Expense',
+        13: 'Accounts Payable',
+        15: 'Equity',
+        16: 'Cost of Goods Sold',
+        17: 'Depreciation Expense'
+      };
+
+      // Get all accounts with their debit and credit totals
+      const [accountsResult] = await db.query(`
+        SELECT 
+          coa.id,
+          coa.account_code,
+          coa.account_name,
+          coa.account_type,
+          COALESCE(SUM(jel.debit_amount), 0) as total_debit,
+          COALESCE(SUM(jel.credit_amount), 0) as total_credit
+        FROM chart_of_accounts coa
+        LEFT JOIN journal_entry_lines jel ON coa.id = jel.account_id
+        LEFT JOIN journal_entries je ON jel.journal_entry_id = je.id
+        WHERE coa.is_active = true ${dateFilter}
+        GROUP BY coa.id, coa.account_code, coa.account_name, coa.account_type
+        ORDER BY coa.account_code
+      `, params);
+
+      // Calculate balances and prepare account data
+      const accounts = accountsResult.map(acc => {
+        const debit = parseFloat(acc.total_debit) || 0;
+        const credit = parseFloat(acc.total_credit) || 0;
+        const balance = debit - credit;
+
+        return {
+          account_code: acc.account_code,
+          account_name: acc.account_name,
+          account_type: acc.account_type,
+          account_type_name: accountTypeNames[acc.account_type] || 'Other',
+          debit: debit,
+          credit: credit,
+          balance: balance
+        };
+      });
+
+      // Calculate totals
+      const total_debits = accounts.reduce((sum, acc) => sum + acc.debit, 0);
+      const total_credits = accounts.reduce((sum, acc) => sum + acc.credit, 0);
+      const difference = total_debits - total_credits;
+      const is_balanced = Math.abs(difference) < 0.01; // Allow for small rounding differences
+
+      // Calculate summary by account type
+      const summary_by_type = {};
+      accounts.forEach(acc => {
+        const typeName = acc.account_type_name;
+        if (!summary_by_type[typeName]) {
+          summary_by_type[typeName] = {
+            total_debit: 0,
+            total_credit: 0,
+            net_balance: 0
+          };
+        }
+        summary_by_type[typeName].total_debit += acc.debit;
+        summary_by_type[typeName].total_credit += acc.credit;
+        summary_by_type[typeName].net_balance += acc.balance;
+      });
+
+      // Prepare response
+      const response = {
+        success: true,
+        data: {
+          as_of_date: reportDate,
+          accounts: accounts,
+          totals: {
+            total_debits: total_debits,
+            total_credits: total_credits,
+            difference: difference,
+            is_balanced: is_balanced
+          },
+          summary_by_type: summary_by_type,
+          metadata: {
+            generated_at: new Date().toISOString(),
+            total_accounts: accounts.length
+          }
+        }
+      };
+
+      res.json(response);
+    } catch (error) {
+      console.error('Error fetching trial balance report:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch trial balance report' });
+    }
   }
 };
 

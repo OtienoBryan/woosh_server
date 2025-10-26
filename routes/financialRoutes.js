@@ -259,10 +259,11 @@ router.put('/receipts/:id/confirm', receivablesController.confirmPayment);
 router.put('/receipts/:id/decline', receivablesController.declinePayment);
 
 // Reports Routes
-router.get('/reports/profit-loss', reportsController.getProfitLossReport);
-router.get('/reports/balance-sheet', reportsController.getBalanceSheetReport);
-router.get('/reports/cash-flow', reportsController.getCashFlowReport);
-router.get('/reports/product-performance', reportsController.getProductPerformanceReport);
+router.get('/reports/profit-loss', authenticateToken, reportsController.getProfitLossReport);
+router.get('/reports/balance-sheet', authenticateToken, reportsController.getBalanceSheetReport);
+router.get('/reports/cash-flow', authenticateToken, reportsController.getCashFlowReport);
+router.get('/reports/trial-balance', authenticateToken, reportsController.getTrialBalanceReport);
+router.get('/reports/product-performance', authenticateToken, reportsController.getProductPerformanceReport);
 router.get('/reports/cost-of-goods-sold-details', reportsController.getCostOfGoodsSoldDetails);
 router.get('/reports/sales-revenue-details', reportsController.getSalesRevenueDetails);
 router.get('/reports/gross-margin-details', reportsController.getGrossMarginDetails);

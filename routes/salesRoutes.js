@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const salesController = require('../controllers/salesController');
+const { authenticateToken } = require('../middleware/auth');
+
+// Apply authentication middleware to all sales routes
+router.use(authenticateToken);
 
 // Dropdown endpoints
 router.get('/countries', salesController.getAllCountries);

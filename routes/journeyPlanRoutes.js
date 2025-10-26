@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const journeyPlanController = require('../controllers/journeyPlanController');
+const { authenticateToken } = require('../middleware/auth');
+
+// Apply authentication middleware to all journey plan routes
+router.use(authenticateToken);
 
 // Get all journey plans
 router.get('/', journeyPlanController.getAllJourneyPlans);

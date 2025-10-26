@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const storeController = require('../controllers/storeController');
+const { authenticateToken } = require('../middleware/auth');
+
+// Apply authentication middleware to all store routes
+router.use(authenticateToken);
 
 // Store CRUD routes
 router.get('/', storeController.getAllStores);

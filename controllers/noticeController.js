@@ -40,10 +40,14 @@ exports.createNotice = async (req, res) => {
   const { title, content, country_id, status } = req.body;
   if (!title || !content) return res.status(400).json({ error: 'Title and content are required' });
   try {
-    const [result] = await db.query('INSERT INTO notices (title, content, country_id, status) VALUES (?, ?, ?, ?)', [title, content, country_id || null, status !== undefined ? status : 0]);
-    res.status(201).json({ id: result.insertId, title, content, country_id, status: status !== undefined ? status : 0 });
+    // Handle country_id properly - if it's null, undefined, or empty, set it to null
+    const countryId = (country_id && country_id !== '') ? country_id : null;
+    
+    const [result] = await db.query('INSERT INTO notices (title, content, country_id, status) VALUES (?, ?, ?, ?)', [title, content, countryId, status !== undefined ? status : 0]);
+    res.status(201).json({ id: result.insertId, title, content, country_id: countryId, status: status !== undefined ? status : 0 });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to create notice' });
+    console.error('Error creating notice:', err);
+    res.status(500).json({ error: 'Failed to create notice', details: err.message });
   }
 };
 
@@ -51,11 +55,15 @@ exports.updateNotice = async (req, res) => {
   const { title, content, country_id, status } = req.body;
   if (!title || !content) return res.status(400).json({ error: 'Title and content are required' });
   try {
-    const [result] = await db.query('UPDATE notices SET title = ?, content = ?, country_id = ?, status = ? WHERE id = ?', [title, content, country_id || null, status !== undefined ? status : 0, req.params.id]);
+    // Handle country_id properly - if it's null, undefined, or empty, set it to null
+    const countryId = (country_id && country_id !== '') ? country_id : null;
+    
+    const [result] = await db.query('UPDATE notices SET title = ?, content = ?, country_id = ?, status = ? WHERE id = ?', [title, content, countryId, status !== undefined ? status : 0, req.params.id]);
     if (result.affectedRows === 0) return res.status(404).json({ error: 'Notice not found' });
-    res.json({ id: req.params.id, title, content, country_id, status: status !== undefined ? status : 0 });
+    res.json({ id: req.params.id, title, content, country_id: countryId, status: status !== undefined ? status : 0 });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to update notice' });
+    console.error('Error updating notice:', err);
+    res.status(500).json({ error: 'Failed to update notice', details: err.message });
   }
 };
 

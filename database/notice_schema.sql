@@ -5,5 +5,5 @@ CREATE TABLE IF NOT EXISTS notices (
   country_id INT,
   status TINYINT DEFAULT 0,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (country_id) REFERENCES Country(id)
-); 
+  FOREIGN KEY (country_id) REFERENCES countries(id)
+);     

@@ -7,7 +7,11 @@ const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
 const documentController = require('../controllers/documentController');
 const calendarTaskController = require('../controllers/calendarTaskController');
+const { authenticateToken } = require('../middleware/auth');
 //const upload = multer({ dest: 'http://www.citlogisticssystems.com/woosh/admin/upload/staff/' });
+
+// Apply authentication middleware to all staff routes
+router.use(authenticateToken);
 
 // Staff routes
 router.get('/staff', staffController.getAllStaff);

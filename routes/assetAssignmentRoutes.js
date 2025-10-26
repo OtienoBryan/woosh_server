@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const assetAssignmentController = require('../controllers/assetAssignmentController');
+const { authenticateToken } = require('../middleware/auth');
+
+// Apply authentication middleware to all asset assignment routes
+router.use(authenticateToken);
 
 // Get all asset assignments
 router.get('/', assetAssignmentController.getAll);

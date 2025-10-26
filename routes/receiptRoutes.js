@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const receiptController = require('../controllers/receiptController');
+const { authenticateToken } = require('../middleware/auth');
+
+// Apply authentication middleware to all receipt routes
+router.use(authenticateToken);
 
 // Post a new receipt
 router.post('/receipts', receiptController.postReceipt);

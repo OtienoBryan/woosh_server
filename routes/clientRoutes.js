@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const clientController = require('../controllers/clientController');
+const { authenticateToken } = require('../middleware/auth');
+
+// Apply authentication middleware to all client routes
+router.use(authenticateToken);
 
 // Fetch all clients from the Clients table
 router.get('/', clientController.getAllClients);

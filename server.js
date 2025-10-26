@@ -7,6 +7,12 @@ const http = require('http');
 const { Server } = require('socket.io');
 require('dotenv').config();
 
+// Import centralized authentication middleware
+const { authenticateToken, validateJWTSecret } = require('./middleware/auth');
+
+// Validate JWT secret on startup
+validateJWTSecret();
+
 // Set timezone to UTC to ensure consistent time handling across environments
 process.env.TZ = 'UTC';
 process.env.NODE_TZ = 'UTC';
@@ -227,8 +233,8 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// Service Types routes
-app.get('/api/service-types', async (req, res) => {
+// Service Types routes (protected)
+app.get('/api/service-types', authenticateToken, async (req, res) => {
   try {
     const [serviceTypes] = await db.query(
       'SELECT * FROM service_types ORDER BY name'
@@ -240,7 +246,7 @@ app.get('/api/service-types', async (req, res) => {
   }
 });
 
-app.get('/api/service-types/:id', async (req, res) => {
+app.get('/api/service-types/:id', authenticateToken, async (req, res) => {
   try {
     const [serviceTypes] = await db.query(
       'SELECT * FROM service_types WHERE id = ?',
@@ -258,8 +264,8 @@ app.get('/api/service-types/:id', async (req, res) => {
   }
 });
 
-// Requests routes
-app.get('/api/requests', async (req, res) => {
+// Requests routes (protected)
+app.get('/api/requests', authenticateToken, async (req, res) => {
   try {
     const { status, myStatus } = req.query;
     let query = 'SELECT * FROM requests';
@@ -289,7 +295,7 @@ app.get('/api/requests', async (req, res) => {
   }
 });
 
-app.post('/api/requests', async (req, res) => {
+app.post('/api/requests', authenticateToken, async (req, res) => {
   try {
     const { 
       userId, 
@@ -380,7 +386,7 @@ app.post('/api/requests', async (req, res) => {
   }
 });
 
-app.patch('/api/requests/:id', async (req, res) => {
+app.patch('/api/requests/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const updates = req.body;
@@ -432,19 +438,19 @@ app.patch('/api/requests/:id', async (req, res) => {
   }
 });
 
-// Staff routes
-app.get('/api/staff', staffController.getAllStaff);
-app.get('/api/staff/:id', staffController.getStaffById);
-app.post('/api/staff', staffController.createStaff);
-app.put('/api/staff/:id', staffController.updateStaff);
-app.delete('/api/staff/:id', staffController.deleteStaff);
-app.patch('/api/staff/:id/status', staffController.updateStaffStatus);
+// Staff routes (protected)
+app.get('/api/staff', authenticateToken, staffController.getAllStaff);
+app.get('/api/staff/:id', authenticateToken, staffController.getStaffById);
+app.post('/api/staff', authenticateToken, staffController.createStaff);
+app.put('/api/staff/:id', authenticateToken, staffController.updateStaff);
+app.delete('/api/staff/:id', authenticateToken, staffController.deleteStaff);
+app.patch('/api/staff/:id/status', authenticateToken, staffController.updateStaffStatus);
 
-// Roles routes
-app.get('/api/roles', roleController.getAllRoles);
+// Roles routes (protected)
+app.get('/api/roles', authenticateToken, roleController.getAllRoles);
 
-// Outlet accounts routes
-app.get('/api/outlet-accounts', async (req, res) => {
+// Outlet accounts routes (protected)
+app.get('/api/outlet-accounts', authenticateToken, async (req, res) => {
   try {
     const [rows] = await db.query('SELECT * FROM outlet_accounts ORDER BY name ASC');
     res.json(rows);
@@ -454,28 +460,28 @@ app.get('/api/outlet-accounts', async (req, res) => {
   }
 });
 
-// Upload routes
-app.post('/api/upload', upload.single('photo'), uploadController.uploadImage);
+// Upload routes (protected)
+app.post('/api/upload', authenticateToken, upload.single('photo'), uploadController.uploadImage);
 
-// Team routes
-app.post('/api/teams', teamController.createTeam);
-app.get('/api/teams', teamController.getTeams);
+// Team routes (protected)
+app.post('/api/teams', authenticateToken, teamController.createTeam);
+app.get('/api/teams', authenticateToken, teamController.getTeams);
 
 // Routes routes (must be registered before generic client routes to avoid conflict)
 if (routesRoutes) {
   app.use('/api/routes', routesRoutes);
 }
 
-// Client routes
+// Client routes (protected via middleware in clientRoutes)
 app.use('/api/clients', clientRoutes);
-app.get('/api/clients/:clientId/branches', branchController.getAllBranches);
-app.post('/api/clients/:clientId/branches', branchController.createBranch);
-app.put('/api/clients/:clientId/branches/:branchId', branchController.updateBranch);
-app.delete('/api/clients/:clientId/branches/:branchId', branchController.deleteBranch);
-app.get('/api/clients/:clientId/service-charges', serviceChargeController.getServiceCharges);
-app.post('/api/clients/:clientId/service-charges', serviceChargeController.createServiceCharge);
-app.put('/api/clients/:clientId/service-charges/:chargeId', serviceChargeController.updateServiceCharge);
-app.delete('/api/clients/:clientId/service-charges/:chargeId', serviceChargeController.deleteServiceCharge);
+app.get('/api/clients/:clientId/branches', authenticateToken, branchController.getAllBranches);
+app.post('/api/clients/:clientId/branches', authenticateToken, branchController.createBranch);
+app.put('/api/clients/:clientId/branches/:branchId', authenticateToken, branchController.updateBranch);
+app.delete('/api/clients/:clientId/branches/:branchId', authenticateToken, branchController.deleteBranch);
+app.get('/api/clients/:clientId/service-charges', authenticateToken, serviceChargeController.getServiceCharges);
+app.post('/api/clients/:clientId/service-charges', authenticateToken, serviceChargeController.createServiceCharge);
+app.put('/api/clients/:clientId/service-charges/:chargeId', authenticateToken, serviceChargeController.updateServiceCharge);
+app.delete('/api/clients/:clientId/service-charges/:chargeId', authenticateToken, serviceChargeController.deleteServiceCharge);
 
 // Journey Plan routes
 app.use('/api/journey-plans', journeyPlanRoutes);
@@ -516,8 +522,8 @@ app.use('/api/tasks', require('./routes/tasksRoutes'));
 app.use('/api/users', userRoutes);
 app.use('/api/uplift-sales', upliftSaleRoutes);
 
-// Visibility Reports route
-app.get('/api/visibility-reports', async (req, res) => {
+// Visibility Reports route (protected)
+app.get('/api/visibility-reports', authenticateToken, async (req, res) => {
   try {
     console.log('Visibility reports route hit!');
     
@@ -628,8 +634,8 @@ app.get('/api/visibility-reports', async (req, res) => {
   }
 });
 
-// Visibility Reports CSV Export route
-app.get('/api/visibility-reports/export', async (req, res) => {
+// Visibility Reports CSV Export route (protected)
+app.get('/api/visibility-reports/export', authenticateToken, async (req, res) => {
   try {
     console.log('Visibility reports CSV export route hit!');
     
@@ -783,8 +789,8 @@ app.get('/api/visibility-reports/export', async (req, res) => {
   }
 });
 
-// Get available countries for filtering
-app.get('/api/countries', async (req, res) => {
+// Get available countries for filtering (protected)
+app.get('/api/countries', authenticateToken, async (req, res) => {
   try {
     console.log('Countries route hit!');
     
@@ -804,7 +810,7 @@ app.get('/api/countries', async (req, res) => {
   }
 });
 
-app.get('/api/regions', async (req, res) => {
+app.get('/api/regions', authenticateToken, async (req, res) => {
   try {
     const [rows] = await db.query('SELECT name FROM Regions ORDER BY name');
     res.json({ success: true, data: rows });
@@ -813,8 +819,8 @@ app.get('/api/regions', async (req, res) => {
   }
 });
 
-// Get available sales reps for filtering
-app.get('/api/sales-reps', async (req, res) => {
+// Get available sales reps for filtering (protected)
+app.get('/api/sales-reps', authenticateToken, async (req, res) => {
   try {
     console.log('Sales reps route hit!');
     
@@ -834,8 +840,8 @@ app.get('/api/sales-reps', async (req, res) => {
   }
 });
 
-// Feedback Reports route
-app.get('/api/feedback-reports', async (req, res) => {
+// Feedback Reports route (protected)
+app.get('/api/feedback-reports', authenticateToken, async (req, res) => {
   try {
     console.log('Feedback reports route hit!');
     
@@ -946,8 +952,8 @@ app.get('/api/feedback-reports', async (req, res) => {
   }
 });
 
-// Feedback Reports CSV Export route
-app.get('/api/feedback-reports/export', async (req, res) => {
+// Feedback Reports CSV Export route (protected)
+app.get('/api/feedback-reports/export', authenticateToken, async (req, res) => {
   try {
     console.log('Feedback reports CSV export route hit!');
     
@@ -1100,8 +1106,8 @@ app.get('/api/feedback-reports/export', async (req, res) => {
   }
 });
 
-// Get available countries for feedback filtering
-app.get('/api/feedback-countries', async (req, res) => {
+// Get available countries for feedback filtering (protected)
+app.get('/api/feedback-countries', authenticateToken, async (req, res) => {
   try {
     console.log('Feedback countries route hit!');
     
@@ -1121,8 +1127,8 @@ app.get('/api/feedback-countries', async (req, res) => {
   }
 });
 
-// Get available sales reps for feedback filtering
-app.get('/api/feedback-sales-reps', async (req, res) => {
+// Get available sales reps for feedback filtering (protected)
+app.get('/api/feedback-sales-reps', authenticateToken, async (req, res) => {
   try {
     console.log('Feedback sales reps route hit!');
     
@@ -1142,8 +1148,8 @@ app.get('/api/feedback-sales-reps', async (req, res) => {
   }
 });
 
-// Availability Reports CSV Export route
-app.get('/api/availability-reports/export', async (req, res) => {
+// Availability Reports CSV Export route (protected)
+app.get('/api/availability-reports/export', authenticateToken, async (req, res) => {
   try {
     console.log('Availability reports CSV export route hit!');
     
@@ -1312,8 +1318,8 @@ app.get('/api/availability-reports/export', async (req, res) => {
   }
 });
 
-// Get available countries for availability filtering
-app.get('/api/availability-countries', async (req, res) => {
+// Get available countries for availability filtering (protected)
+app.get('/api/availability-countries', authenticateToken, async (req, res) => {
   try {
     console.log('Availability countries route hit!');
     
@@ -1334,8 +1340,8 @@ app.get('/api/availability-countries', async (req, res) => {
   }
 });
 
-// Get available sales reps for availability filtering
-app.get('/api/availability-sales-reps', async (req, res) => {
+// Get available sales reps for availability filtering (protected)
+app.get('/api/availability-sales-reps', authenticateToken, async (req, res) => {
   try {
     console.log('Availability sales reps route hit!');
     

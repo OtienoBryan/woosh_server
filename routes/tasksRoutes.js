@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const tasksController = require('../controllers/tasksController');
+const { authenticateToken } = require('../middleware/auth');
+
+// Apply authentication middleware to all task routes
+router.use(authenticateToken);
 
 // Get tasks with month filter
 router.get('/', tasksController.getTasks);

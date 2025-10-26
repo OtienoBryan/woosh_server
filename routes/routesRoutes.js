@@ -1,13 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const routesController = require('../controllers/routesController');
-
-// Authentication middleware (you may need to adjust this based on your auth setup)
-const authenticateToken = (req, res, next) => {
-  // Add your authentication logic here
-  // For now, we'll skip authentication for development
-  next();
-};
+const { authenticateToken } = require('../middleware/auth');
 
 // Apply authentication to all routes
 router.use(authenticateToken);

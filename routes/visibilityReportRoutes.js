@@ -3,6 +3,10 @@ console.log('=== VISIBILITY REPORT ROUTES FILE IS LOADING ===');
 const express = require('express');
 const router = express.Router();
 const visibilityReportController = require('../controllers/visibilityReportController');
+const { authenticateToken } = require('../middleware/auth');
+
+// Apply authentication middleware to all visibility report routes
+router.use(authenticateToken);
 
 // Get all visibility reports
 router.get('/', visibilityReportController.getAllVisibilityReports);

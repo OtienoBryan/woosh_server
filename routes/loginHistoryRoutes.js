@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../database/db');
+const { authenticateToken } = require('../middleware/auth');
+
+// Apply authentication middleware to all login history routes
+router.use(authenticateToken);
 
 router.get('/', async (req, res) => {
   console.log('[loginHistoryRoutes] GET /api/login-history endpoint hit');

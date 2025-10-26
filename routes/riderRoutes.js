@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../database/db'); // Adjust path if needed
+const { authenticateToken } = require('../middleware/auth');
+
+// Apply authentication middleware to all rider routes
+router.use(authenticateToken);
 
 // GET /api/riders - fetch all riders
 router.get('/', async (req, res) => {

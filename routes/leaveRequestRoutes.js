@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const leaveRequestController = require('../controllers/leaveRequestController');
+const { authenticateToken } = require('../middleware/auth');
+
+// Apply authentication middleware to all leave request routes
+router.use(authenticateToken);
 
 // GET /api/leave-requests
 router.get('/', leaveRequestController.getAllLeaveRequests);

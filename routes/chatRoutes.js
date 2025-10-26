@@ -1,28 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const chatController = require('../controllers/chatController');
-const jwt = require('jsonwebtoken');
-
-// Simple JWT auth middleware with logging
-function authenticateToken(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  console.log('Authorization header:', authHeader);
-  const token = authHeader && authHeader.split(' ')[1];
-  console.log('JWT token:', token);
-  if (!token) {
-    console.log('No token provided');
-    return res.sendStatus(401);
-  }
-  jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key', (err, user) => {
-    if (err) {
-      console.log('JWT error:', err);
-      return res.sendStatus(403);
-    }
-    console.log('Decoded user:', user);
-    req.user = user;
-    next();
-  });
-}
+const { authenticateToken } = require('../middleware/auth');
 
 // Apply auth middleware to all chat routes
 router.use(authenticateToken);

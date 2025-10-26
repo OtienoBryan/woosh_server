@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const myAssetsController = require('../controllers/myAssetsController');
+const { authenticateToken } = require('../middleware/auth');
 
 // Configure multer for memory storage
 const upload = multer({
@@ -21,6 +22,9 @@ const upload = multer({
     }
   }
 });
+
+// Apply authentication middleware to all my assets routes
+router.use(authenticateToken);
 
 // Get all assets with pagination and filtering
 router.get('/', myAssetsController.getAllAssets);

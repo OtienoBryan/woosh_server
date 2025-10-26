@@ -1,25 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const upliftSaleController = require('../controllers/upliftSaleController');
-
-// Middleware to verify JWT token
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (!token) {
-    return res.status(401).json({ success: false, error: 'Access token required' });
-  }
-
-  try {
-    const jwt = require('jsonwebtoken');
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
-    next();
-  } catch (error) {
-    return res.status(403).json({ success: false, error: 'Invalid or expired token' });
-  }
-};
+const { authenticateToken } = require('../middleware/auth');
 
 // Apply authentication middleware to all routes
 router.use(authenticateToken);

@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const clientAssignmentController = require('../controllers/clientAssignmentController');
+const { authenticateToken } = require('../middleware/auth');
+
+// Apply authentication middleware to all client assignment routes
+router.use(authenticateToken);
 
 // Get all client assignments
 router.get('/', clientAssignmentController.getAllClientAssignments);

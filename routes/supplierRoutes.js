@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const supplierController = require('../controllers/supplierController');
+const { authenticateToken } = require('../middleware/auth');
+
+// Apply authentication middleware to all supplier routes
+router.use(authenticateToken);
 
 // Get all suppliers
 router.get('/suppliers', supplierController.getAllSuppliers);

@@ -13,7 +13,7 @@ const authenticateToken = (req, res, next) => {
       return res.status(401).json({ 
         success: false, 
         error: 'Access token required',
-        message: 'No authentication token provided'
+        message: 'Unathorized Access. Please login to continue.'
       });
     }
 

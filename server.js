@@ -102,8 +102,16 @@ app.get('/api/test', (req, res) => {
   res.json({ message: 'API is working!', timestamp: new Date().toISOString() });
 });
 
-// Debug endpoint to check environment variables
-app.get('/api/debug', (req, res) => {
+// Debug endpoint to check environment variables (PROTECTED)
+app.get('/api/debug', authenticateToken, (req, res) => {
+  // Only allow in non-production environments for extra security
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({ 
+      error: 'Debug endpoint disabled in production',
+      timestamp: new Date().toISOString()
+    });
+  }
+  
   res.json({
     message: 'Debug info',
     timestamp: new Date().toISOString(),
@@ -1373,19 +1381,8 @@ app.get('/api/test', (req, res) => {
     });
 });
 
-// Test sales orders endpoint
-app.get('/api/test-sales-orders', (req, res) => {
-  console.log('=== TEST SALES ORDERS ENDPOINT ===');
-  res.json({ 
-    message: 'Sales orders endpoint is accessible',
-    timestamp: new Date().toISOString(),
-    routes: {
-      'GET /api/financial/sales-orders': 'Get all sales orders',
-      'POST /api/financial/sales-orders': 'Create sales order',
-      'GET /api/financial/sales-orders/:id': 'Get sales order by ID'
-    }
-  });
-});
+// Test sales orders endpoint removed for security
+// Use /api/health or /api/test for basic server health checks instead
 
 // Error handling middleware
 app.use((err, req, res, next) => {

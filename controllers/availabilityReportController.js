@@ -115,12 +115,17 @@ exports.exportAvailabilityReportsCSV = async (req, res) => {
     console.log('Availability reports CSV export route hit!');
     const { startDate, endDate, currentDate, country, salesRep, search } = req.query;
     let sql = `
-      SELECT ar.id, ar.reportId, ar.comment, ar.createdAt,
-             c.name AS outlet, co.name AS country, u.name AS salesRep
-      FROM AvailabilityReport ar
+      SELECT ar.id, ar.reportId, ar.comment, ar.createdAt, ar.productId,
+             c.name AS outlet, co.name AS country, u.name AS salesRep,
+             ar.ProductName AS productName, ar.quantity,
+             cat.id AS categoryId, cat.name AS categoryName, 
+             COALESCE(cat.orderIndex, 999) AS categoryOrder
+      FROM ProductReport ar
       LEFT JOIN Clients c ON ar.clientId = c.id
       LEFT JOIN Country co ON c.countryId = co.id
       LEFT JOIN SalesRep u ON ar.userId = u.id
+      LEFT JOIN products p ON ar.productId = p.id
+      LEFT JOIN Category cat ON p.category_id = cat.id
     `;
     const params = [];
     let whereConditions = [];

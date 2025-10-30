@@ -1720,10 +1720,52 @@ const reportsController = {
   // Get Trial Balance Report
   getTrialBalanceReport: async (req, res) => {
     try {
-      const { as_of_date } = req.query;
-      const dateFilter = as_of_date ? 'AND je.entry_date <= ?' : 'AND je.entry_date <= CURDATE()';
-      const params = as_of_date ? [as_of_date] : [];
-      const reportDate = as_of_date || new Date().toISOString().split('T')[0];
+      const { as_of_date, from_date, to_date } = req.query;
+      
+      // Determine date filter based on provided parameters
+      let dateFilter = '';
+      let params = [];
+      let reportDateInfo = {};
+      
+      if (from_date && to_date) {
+        // Date range filter
+        dateFilter = 'AND je.entry_date >= ? AND je.entry_date <= ?';
+        params = [from_date, to_date];
+        reportDateInfo = {
+          from_date: from_date,
+          to_date: to_date,
+          date_range: `From ${from_date} to ${to_date}`
+        };
+      } else if (from_date) {
+        // From date only
+        dateFilter = 'AND je.entry_date >= ?';
+        params = [from_date];
+        reportDateInfo = {
+          from_date: from_date,
+          date_range: `From ${from_date} onwards`
+        };
+      } else if (to_date) {
+        // To date only (as of date)
+        dateFilter = 'AND je.entry_date <= ?';
+        params = [to_date];
+        reportDateInfo = {
+          as_of_date: to_date
+        };
+      } else if (as_of_date) {
+        // Legacy as_of_date parameter
+        dateFilter = 'AND je.entry_date <= ?';
+        params = [as_of_date];
+        reportDateInfo = {
+          as_of_date: as_of_date
+        };
+      } else {
+        // Default: up to current date
+        dateFilter = 'AND je.entry_date <= CURDATE()';
+        params = [];
+        reportDateInfo = {
+          as_of_date: new Date().toISOString().split('T')[0]
+        };
+      }
 
       // Get account type names mapping
       const accountTypeNames = {
@@ -1738,45 +1780,181 @@ const reportsController = {
         17: 'Depreciation Expense'
       };
 
-      // Get all accounts with their debit and credit totals
-      const [accountsResult] = await db.query(`
-        SELECT 
-          coa.id,
-          coa.account_code,
-          coa.account_name,
-          coa.account_type,
-          COALESCE(SUM(jel.debit_amount), 0) as total_debit,
-          COALESCE(SUM(jel.credit_amount), 0) as total_credit
-        FROM chart_of_accounts coa
-        LEFT JOIN journal_entry_lines jel ON coa.id = jel.account_id
-        LEFT JOIN journal_entries je ON jel.journal_entry_id = je.id
-        WHERE coa.is_active = true ${dateFilter}
-        GROUP BY coa.id, coa.account_code, coa.account_name, coa.account_type
-        ORDER BY coa.account_code
-      `, params);
+      let accounts = [];
 
-      // Calculate balances and prepare account data
-      const accounts = accountsResult.map(acc => {
-        const debit = parseFloat(acc.total_debit) || 0;
-        const credit = parseFloat(acc.total_credit) || 0;
-        const balance = debit - credit;
+      // If date range is specified, calculate opening, period, and closing balances
+      if (from_date && to_date) {
+        // Get opening balances (before from_date)
+        const [openingBalances] = await db.query(`
+          SELECT 
+            coa.id,
+            coa.account_code,
+            coa.account_name,
+            coa.account_type,
+            COALESCE(SUM(jel.debit_amount), 0) as opening_debit,
+            COALESCE(SUM(jel.credit_amount), 0) as opening_credit
+          FROM chart_of_accounts coa
+          LEFT JOIN journal_entry_lines jel ON coa.id = jel.account_id
+          LEFT JOIN journal_entries je ON jel.journal_entry_id = je.id AND je.entry_date < ?
+          WHERE coa.is_active = true
+          GROUP BY coa.id, coa.account_code, coa.account_name, coa.account_type
+          ORDER BY coa.account_code
+        `, [from_date]);
 
-        return {
-          account_code: acc.account_code,
-          account_name: acc.account_name,
-          account_type: acc.account_type,
-          account_type_name: accountTypeNames[acc.account_type] || 'Other',
-          debit: debit,
-          credit: credit,
-          balance: balance
-        };
-      });
+        // Get period transactions (within date range)
+        const [periodTransactions] = await db.query(`
+          SELECT 
+            coa.id,
+            coa.account_code,
+            coa.account_name,
+            coa.account_type,
+            COALESCE(SUM(jel.debit_amount), 0) as period_debit,
+            COALESCE(SUM(jel.credit_amount), 0) as period_credit
+          FROM chart_of_accounts coa
+          LEFT JOIN journal_entry_lines jel ON coa.id = jel.account_id
+          LEFT JOIN journal_entries je ON jel.journal_entry_id = je.id AND je.entry_date >= ? AND je.entry_date <= ?
+          WHERE coa.is_active = true
+          GROUP BY coa.id, coa.account_code, coa.account_name, coa.account_type
+          ORDER BY coa.account_code
+        `, [from_date, to_date]);
+
+        // Combine the results
+        const accountsMap = new Map();
+        
+        // Add opening balances
+        openingBalances.forEach(acc => {
+          accountsMap.set(acc.account_code, {
+            account_code: acc.account_code,
+            account_name: acc.account_name,
+            account_type: acc.account_type,
+            account_type_name: accountTypeNames[acc.account_type] || 'Other',
+            opening_debit: parseFloat(acc.opening_debit) || 0,
+            opening_credit: parseFloat(acc.opening_credit) || 0,
+            period_debit: 0,
+            period_credit: 0
+          });
+        });
+
+        // Add period transactions
+        periodTransactions.forEach(acc => {
+          if (accountsMap.has(acc.account_code)) {
+            const account = accountsMap.get(acc.account_code);
+            account.period_debit = parseFloat(acc.period_debit) || 0;
+            account.period_credit = parseFloat(acc.period_credit) || 0;
+          } else {
+            accountsMap.set(acc.account_code, {
+              account_code: acc.account_code,
+              account_name: acc.account_name,
+              account_type: acc.account_type,
+              account_type_name: accountTypeNames[acc.account_type] || 'Other',
+              opening_debit: 0,
+              opening_credit: 0,
+              period_debit: parseFloat(acc.period_debit) || 0,
+              period_credit: parseFloat(acc.period_credit) || 0
+            });
+          }
+        });
+
+        // Calculate balances
+        accounts = Array.from(accountsMap.values()).map(acc => {
+          const opening_balance = acc.opening_debit - acc.opening_credit;
+          const period_balance = acc.period_debit - acc.period_credit;
+          const closing_balance = opening_balance + period_balance;
+
+          return {
+            ...acc,
+            opening_balance: opening_balance,
+            period_balance: period_balance,
+            closing_balance: closing_balance,
+            // Keep legacy fields for backward compatibility
+            debit: acc.period_debit,
+            credit: acc.period_credit,
+            balance: closing_balance
+          };
+        });
+      } else {
+        // Original logic for non-date-range queries
+        const [accountsResult] = await db.query(`
+          SELECT 
+            coa.id,
+            coa.account_code,
+            coa.account_name,
+            coa.account_type,
+            COALESCE(SUM(jel.debit_amount), 0) as total_debit,
+            COALESCE(SUM(jel.credit_amount), 0) as total_credit
+          FROM chart_of_accounts coa
+          LEFT JOIN journal_entry_lines jel ON coa.id = jel.account_id
+          LEFT JOIN journal_entries je ON jel.journal_entry_id = je.id
+          WHERE coa.is_active = true ${dateFilter}
+          GROUP BY coa.id, coa.account_code, coa.account_name, coa.account_type
+          ORDER BY coa.account_code
+        `, params);
+
+        accounts = accountsResult.map(acc => {
+          const debit = parseFloat(acc.total_debit) || 0;
+          const credit = parseFloat(acc.total_credit) || 0;
+          const balance = debit - credit;
+
+          return {
+            account_code: acc.account_code,
+            account_name: acc.account_name,
+            account_type: acc.account_type,
+            account_type_name: accountTypeNames[acc.account_type] || 'Other',
+            debit: debit,
+            credit: credit,
+            balance: balance
+          };
+        });
+      }
 
       // Calculate totals
-      const total_debits = accounts.reduce((sum, acc) => sum + acc.debit, 0);
-      const total_credits = accounts.reduce((sum, acc) => sum + acc.credit, 0);
-      const difference = total_debits - total_credits;
-      const is_balanced = Math.abs(difference) < 0.01; // Allow for small rounding differences
+      let totals = {};
+      
+      if (from_date && to_date) {
+        // Calculate opening, period, and closing totals
+        const total_opening_debit = accounts.reduce((sum, acc) => sum + (acc.opening_debit || 0), 0);
+        const total_opening_credit = accounts.reduce((sum, acc) => sum + (acc.opening_credit || 0), 0);
+        const total_opening_balance = total_opening_debit - total_opening_credit;
+        
+        const total_period_debit = accounts.reduce((sum, acc) => sum + (acc.period_debit || 0), 0);
+        const total_period_credit = accounts.reduce((sum, acc) => sum + (acc.period_credit || 0), 0);
+        const total_period_balance = total_period_debit - total_period_credit;
+        
+        const total_closing_balance = accounts.reduce((sum, acc) => sum + (acc.closing_balance || 0), 0);
+        
+        totals = {
+          // Opening totals
+          total_opening_debit: total_opening_debit,
+          total_opening_credit: total_opening_credit,
+          total_opening_balance: total_opening_balance,
+          
+          // Period totals
+          total_period_debit: total_period_debit,
+          total_period_credit: total_period_credit,
+          total_period_balance: total_period_balance,
+          
+          // Closing totals
+          total_closing_balance: total_closing_balance,
+          
+          // Legacy fields for backward compatibility
+          total_debits: total_period_debit,
+          total_credits: total_period_credit,
+          difference: total_period_debit - total_period_credit,
+          is_balanced: Math.abs(total_period_debit - total_period_credit) < 0.01
+        };
+      } else {
+        // Original totals calculation
+        const total_debits = accounts.reduce((sum, acc) => sum + acc.debit, 0);
+        const total_credits = accounts.reduce((sum, acc) => sum + acc.credit, 0);
+        const difference = total_debits - total_credits;
+        
+        totals = {
+          total_debits: total_debits,
+          total_credits: total_credits,
+          difference: difference,
+          is_balanced: Math.abs(difference) < 0.01
+        };
+      }
 
       // Calculate summary by account type
       const summary_by_type = {};
@@ -1798,14 +1976,10 @@ const reportsController = {
       const response = {
         success: true,
         data: {
-          as_of_date: reportDate,
+          ...reportDateInfo,
+          as_of_date: reportDateInfo.as_of_date || reportDateInfo.to_date || new Date().toISOString().split('T')[0],
           accounts: accounts,
-          totals: {
-            total_debits: total_debits,
-            total_credits: total_credits,
-            difference: difference,
-            is_balanced: is_balanced
-          },
+          totals: totals,
           summary_by_type: summary_by_type,
           metadata: {
             generated_at: new Date().toISOString(),

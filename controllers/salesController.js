@@ -779,15 +779,74 @@ exports.getSalesRepPerformance = async (req, res) => {
 // Get master sales data for all clients by year
 exports.getMasterSalesData = async (req, res) => {
   try {
-    const { year, category, salesRep, categoryGroup, startDate, endDate, clientStatus, viewType } = req.query;
+    const { year, category, salesRep, categoryGroup, startDate, endDate, clientStatus, viewType, page, limit, sortColumn, sortDirection } = req.query;
     const currentYear = year || new Date().getFullYear();
     const isQuantityView = viewType === 'quantity';
+    
+    // Pagination parameters
+    const currentPage = parseInt(page) || 1;
+    const itemsPerPage = parseInt(limit) || 25;
+    const offset = (currentPage - 1) * itemsPerPage;
     
     // Parse category and salesRep as arrays
     const categories = category ? (Array.isArray(category) ? category : [category]) : [];
     const salesReps = salesRep ? (Array.isArray(salesRep) ? salesRep : [salesRep]) : [];
 
-    // Get all clients with their sales data for each month
+    console.log(`[Master Sales] Fetching page ${currentPage} with ${itemsPerPage} items (Sort: ${sortColumn || 'none'} ${sortDirection || ''})`);
+
+    // Build WHERE conditions
+    const conditions = [];
+    const params = [];
+    
+    if (categories.length > 0) {
+      conditions.push('cat.id IN (' + categories.map(() => '?').join(',') + ')');
+      params.push(...categories);
+    }
+    if (categoryGroup === 'vapes') {
+      conditions.push('p.category_id IN (1, 3)');
+    } else if (categoryGroup === 'pouches') {
+      conditions.push('p.category_id IN (4, 5)');
+    }
+    if (salesReps.length > 0) {
+      conditions.push('sr.id IN (' + salesReps.map(() => '?').join(',') + ')');
+      params.push(...salesReps);
+    }
+    if (startDate) {
+      conditions.push('so.order_date >= ?');
+      params.push(startDate);
+    }
+    if (endDate) {
+      conditions.push('so.order_date <= ?');
+      params.push(endDate);
+    }
+    if (clientStatus === 'active') {
+      conditions.push('c.id IN (SELECT DISTINCT client_id FROM sales_orders WHERE order_date >= DATE_SUB(CURDATE(), INTERVAL 45 DAY))');
+    } else if (clientStatus === 'inactive') {
+      conditions.push('c.id NOT IN (SELECT DISTINCT client_id FROM sales_orders WHERE order_date >= DATE_SUB(CURDATE(), INTERVAL 45 DAY))');
+    }
+    
+    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+
+    // Get total count for pagination (optimized - counts clients, not rows)
+    const countQuery = `
+      SELECT COUNT(DISTINCT c.id) as total
+      FROM Clients c
+      LEFT JOIN sales_orders so ON c.id = so.client_id AND so.my_status IN (1, 2, 3, 7)
+      LEFT JOIN sales_order_items soi ON so.id = soi.sales_order_id
+      LEFT JOIN products p ON soi.product_id = p.id
+      LEFT JOIN Category cat ON p.category_id = cat.id
+      LEFT JOIN SalesRep sr ON c.route_id_update = sr.route_id_update
+      ${whereClause}
+    `;
+    
+    const [countResult] = await db.query(countQuery, params);
+    const totalClients = countResult[0].total;
+    const totalPages = Math.ceil(totalClients / itemsPerPage);
+
+    // OPTIMIZED: Get clients with their sales data for each month with PAGINATION
+    const yearParams = Array(13).fill(currentYear); // 12 months + total
+    const allParams = [...yearParams, ...params, itemsPerPage, offset];
+    
     const [rows] = await db.query(`
       SELECT 
         c.id as client_id,
@@ -806,50 +865,45 @@ exports.getMasterSalesData = async (req, res) => {
         COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 12 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as december,
         COALESCE(SUM(CASE WHEN YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as total
       FROM Clients c
-      LEFT JOIN sales_orders so ON c.id = so.client_id AND so.my_status = 1
+      LEFT JOIN sales_orders so ON c.id = so.client_id AND so.my_status IN (1, 2, 3, 7)
       LEFT JOIN sales_order_items soi ON so.id = soi.sales_order_id
       LEFT JOIN products p ON soi.product_id = p.id
       LEFT JOIN Category cat ON p.category_id = cat.id
       LEFT JOIN SalesRep sr ON c.route_id_update = sr.route_id_update
-      ${(() => {
-        const conditions = [];
-        if (categories.length > 0) {
-          conditions.push('cat.id IN (' + categories.map(() => '?').join(',') + ')');
-        }
-        if (categoryGroup === 'vapes') {
-          conditions.push('p.category_id IN (1, 3)');
-        } else if (categoryGroup === 'pouches') {
-          conditions.push('p.category_id IN (4, 5)');
-        }
-        if (salesReps.length > 0) {
-          conditions.push('sr.id IN (' + salesReps.map(() => '?').join(',') + ')');
-        }
-        if (startDate) {
-          conditions.push('so.order_date >= ?');
-        }
-        if (endDate) {
-          conditions.push('so.order_date <= ?');
-        }
-        if (clientStatus === 'active') {
-          conditions.push('c.id IN (SELECT DISTINCT client_id FROM sales_orders WHERE order_date >= DATE_SUB(CURDATE(), INTERVAL 45 DAY))');
-        } else if (clientStatus === 'inactive') {
-          conditions.push('c.id NOT IN (SELECT DISTINCT client_id FROM sales_orders WHERE order_date >= DATE_SUB(CURDATE(), INTERVAL 45 DAY))');
-        }
-        return conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
-      })()}
+      ${whereClause}
       GROUP BY c.id, c.name
-      ORDER BY c.name
-    `, (() => {
-      const params = [currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, 
-        currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, currentYear];
-      if (categories.length > 0) params.push(...categories);
-      if (salesReps.length > 0) params.push(...salesReps);
-      if (startDate) params.push(startDate);
-      if (endDate) params.push(endDate);
-      return params;
-    })());
+      ${(() => {
+        // Build ORDER BY clause based on sortColumn and sortDirection
+        if (sortColumn) {
+          const direction = sortDirection === 'asc' ? 'ASC' : 'DESC';
+          if (sortColumn === 'client_name') {
+            return `ORDER BY c.name ${direction}`;
+          } else if (sortColumn === 'total') {
+            return `ORDER BY total ${direction}`;
+          } else if (['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'].includes(sortColumn)) {
+            return `ORDER BY ${sortColumn} ${direction}`;
+          }
+        }
+        return 'ORDER BY c.name'; // Default sort by client name
+      })()}
+      LIMIT ? OFFSET ?
+    `, allParams);
 
-    res.json(rows);
+    console.log(`[Master Sales] Returned ${rows.length} clients (Page ${currentPage}/${totalPages})`);
+
+    // Return data with pagination metadata
+    res.json({
+      success: true,
+      data: rows,
+      pagination: {
+        currentPage,
+        itemsPerPage,
+        totalItems: totalClients,
+        totalPages,
+        hasNextPage: currentPage < totalPages,
+        hasPrevPage: currentPage > 1
+      }
+    });
   } catch (err) {
     console.error('Error fetching master sales data:', err);
     res.status(500).json({ error: 'Failed to fetch master sales data', details: err.message });
@@ -880,11 +934,17 @@ exports.getClientMonthDetails = async (req, res) => {
   try {
     const { clientId, month, year } = req.query;
     
+    console.log('[getClientMonthDetails] Request params:', { clientId, month, year });
+    
     if (!clientId || !month || !year) {
+      console.log('[getClientMonthDetails] Missing required params');
       return res.status(400).json({ error: 'Client ID, month, and year are required' });
     }
 
-    const [rows] = await db.query(`
+    const queryParams = [clientId, month, year];
+    console.log('[getClientMonthDetails] Executing query with params:', queryParams);
+    
+    const query = `
       SELECT 
         so.id as order_id,
         so.order_date,
@@ -910,14 +970,72 @@ exports.getClientMonthDetails = async (req, res) => {
       WHERE so.client_id = ? 
         AND MONTH(so.order_date) = ? 
         AND YEAR(so.order_date) = ?
-        AND so.my_status = 1
+        AND so.my_status IN (1, 2, 3, 7)
       ORDER BY so.order_date DESC, so.id DESC, p.product_name
-    `, [clientId, month, year]);
+    `;
+    
+    const [rows] = await db.query(query, queryParams);
 
+    console.log('[getClientMonthDetails] Found', rows.length, 'records');
     res.json(rows);
   } catch (err) {
     console.error('Error fetching client month details:', err);
     res.status(500).json({ error: 'Failed to fetch client month details', details: err.message });
+  }
+};
+
+// Get detailed sales data for a specific client for the entire year
+exports.getClientYearDetails = async (req, res) => {
+  try {
+    const { clientId, year } = req.query;
+    
+    console.log('[getClientYearDetails] Request params:', { clientId, year });
+    
+    if (!clientId || !year) {
+      console.log('[getClientYearDetails] Missing required params');
+      return res.status(400).json({ error: 'Client ID and year are required' });
+    }
+
+    const queryParams = [clientId, year];
+    console.log('[getClientYearDetails] Executing query with params:', queryParams);
+    
+    const query = `
+      SELECT 
+        so.id as order_id,
+        so.order_date,
+        so.id as order_number,
+        so.total_amount as order_total,
+        so.status as order_status,
+        so.created_at as order_created_at,
+        c.name as client_name,
+        c.contact as client_phone,
+        c.email as client_email,
+        p.product_name,
+        soi.quantity,
+        soi.unit_price,
+        (soi.quantity * soi.unit_price) as line_total,
+        cat.name as category_name,
+        sr.name as sales_rep_name,
+        MONTHNAME(so.order_date) as month_name
+      FROM sales_orders so
+      JOIN Clients c ON so.client_id = c.id
+      JOIN sales_order_items soi ON so.id = soi.sales_order_id
+      JOIN products p ON soi.product_id = p.id
+      LEFT JOIN Category cat ON p.category_id = cat.id
+      LEFT JOIN SalesRep sr ON c.route_id_update = sr.route_id_update
+      WHERE so.client_id = ? 
+        AND YEAR(so.order_date) = ?
+        AND so.my_status IN (1, 2, 3, 7)
+      ORDER BY so.order_date DESC, so.id DESC, p.product_name
+    `;
+    
+    const [rows] = await db.query(query, queryParams);
+
+    console.log('[getClientYearDetails] Found', rows.length, 'records');
+    res.json(rows);
+  } catch (err) {
+    console.error('Error fetching client year details:', err);
+    res.status(500).json({ error: 'Failed to fetch client year details', details: err.message });
   }
 };
 
@@ -1239,7 +1357,7 @@ exports.getSalesRepReports = async (req, res) => {
 // Get sales rep monthly performance data
 exports.getSalesRepMonthlyPerformance = async (req, res) => {
   try {
-    const { year, salesRep, startDate, endDate, viewType } = req.query;
+    const { year, salesRep, startDate, endDate, viewType, country } = req.query;
     const currentYear = year || new Date().getFullYear();
     const isQuantityView = viewType === 'quantity';
     
@@ -1284,33 +1402,7 @@ exports.getSalesRepMonthlyPerformance = async (req, res) => {
         COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 10 AND YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as october_pouches,
         COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 11 AND YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as november_pouches,
         COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 12 AND YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as december_pouches,
-        COALESCE(SUM(CASE WHEN YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as total_pouches,
-        -- Vapes targets
-        COALESCE(MAX(CASE WHEN t.month = 1 THEN t.vapes_target ELSE 0 END), 0) as january_vapes_target,
-        COALESCE(MAX(CASE WHEN t.month = 2 THEN t.vapes_target ELSE 0 END), 0) as february_vapes_target,
-        COALESCE(MAX(CASE WHEN t.month = 3 THEN t.vapes_target ELSE 0 END), 0) as march_vapes_target,
-        COALESCE(MAX(CASE WHEN t.month = 4 THEN t.vapes_target ELSE 0 END), 0) as april_vapes_target,
-        COALESCE(MAX(CASE WHEN t.month = 5 THEN t.vapes_target ELSE 0 END), 0) as may_vapes_target,
-        COALESCE(MAX(CASE WHEN t.month = 6 THEN t.vapes_target ELSE 0 END), 0) as june_vapes_target,
-        COALESCE(MAX(CASE WHEN t.month = 7 THEN t.vapes_target ELSE 0 END), 0) as july_vapes_target,
-        COALESCE(MAX(CASE WHEN t.month = 8 THEN t.vapes_target ELSE 0 END), 0) as august_vapes_target,
-        COALESCE(MAX(CASE WHEN t.month = 9 THEN t.vapes_target ELSE 0 END), 0) as september_vapes_target,
-        COALESCE(MAX(CASE WHEN t.month = 10 THEN t.vapes_target ELSE 0 END), 0) as october_vapes_target,
-        COALESCE(MAX(CASE WHEN t.month = 11 THEN t.vapes_target ELSE 0 END), 0) as november_vapes_target,
-        COALESCE(MAX(CASE WHEN t.month = 12 THEN t.vapes_target ELSE 0 END), 0) as december_vapes_target,
-        -- Pouches targets
-        COALESCE(MAX(CASE WHEN t.month = 1 THEN t.pouches_target ELSE 0 END), 0) as january_pouches_target,
-        COALESCE(MAX(CASE WHEN t.month = 2 THEN t.pouches_target ELSE 0 END), 0) as february_pouches_target,
-        COALESCE(MAX(CASE WHEN t.month = 3 THEN t.pouches_target ELSE 0 END), 0) as march_pouches_target,
-        COALESCE(MAX(CASE WHEN t.month = 4 THEN t.pouches_target ELSE 0 END), 0) as april_pouches_target,
-        COALESCE(MAX(CASE WHEN t.month = 5 THEN t.pouches_target ELSE 0 END), 0) as may_pouches_target,
-        COALESCE(MAX(CASE WHEN t.month = 6 THEN t.pouches_target ELSE 0 END), 0) as june_pouches_target,
-        COALESCE(MAX(CASE WHEN t.month = 7 THEN t.pouches_target ELSE 0 END), 0) as july_pouches_target,
-        COALESCE(MAX(CASE WHEN t.month = 8 THEN t.pouches_target ELSE 0 END), 0) as august_pouches_target,
-        COALESCE(MAX(CASE WHEN t.month = 9 THEN t.pouches_target ELSE 0 END), 0) as september_pouches_target,
-        COALESCE(MAX(CASE WHEN t.month = 10 THEN t.pouches_target ELSE 0 END), 0) as october_pouches_target,
-        COALESCE(MAX(CASE WHEN t.month = 11 THEN t.pouches_target ELSE 0 END), 0) as november_pouches_target,
-        COALESCE(MAX(CASE WHEN t.month = 12 THEN t.pouches_target ELSE 0 END), 0) as december_pouches_target
+        COALESCE(SUM(CASE WHEN YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0) as total_pouches
         ` : `
         -- Sales values
         COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 1 AND YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as january,
@@ -1328,13 +1420,15 @@ exports.getSalesRepMonthlyPerformance = async (req, res) => {
         COALESCE(SUM(CASE WHEN YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as total
         `}
       FROM SalesRep sr
-      LEFT JOIN sales_orders so ON (sr.id = so.salesrep OR sr.id = CAST(so.salesrep AS UNSIGNED)) AND so.my_status >= 1 AND so.my_status <= 4
+      LEFT JOIN sales_orders so ON (sr.id = so.salesrep OR sr.id = CAST(so.salesrep AS UNSIGNED)) AND so.my_status IN (1, 2, 3, 7)
       LEFT JOIN sales_order_items soi ON so.id = soi.sales_order_id
       LEFT JOIN products p ON soi.product_id = p.id
-      LEFT JOIN sales_rep_targets t ON sr.id = t.sales_rep_id AND t.year = ?
       WHERE sr.status = 1
       ${(() => {
         const conditions = [];
+        if (country) {
+          conditions.push('sr.country = ?');
+        }
         if (salesReps.length > 0) {
           conditions.push('sr.id IN (' + salesReps.map(() => '?').join(',') + ')');
         }
@@ -1354,23 +1448,22 @@ exports.getSalesRepMonthlyPerformance = async (req, res) => {
     `, (() => {
       let params;
       if (isQuantityView) {
-        // For quantity view: 12 months for vapes + 1 total for vapes + 12 months for pouches + 1 total for pouches + 1 for targets year + 2 for ORDER BY = 29 parameters
+        // For quantity view: 12 months for vapes + 1 total for vapes + 12 months for pouches + 1 total for pouches + 2 for ORDER BY = 28 parameters
         params = [
           currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, 
           currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, // vapes months + total
           currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, 
           currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, // pouches months + total
-          currentYear, // targets year
           currentYear, currentYear // ORDER BY vapes and pouches totals
         ];
       } else {
-        // For sales view: 12 months + 1 total + 1 for targets year + 1 for ORDER BY = 15 parameters
+        // For sales view: 12 months + 1 total + 1 for ORDER BY = 14 parameters
         params = [currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, 
           currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, currentYear, // months + total
-          currentYear, // targets year
           currentYear // ORDER BY total
         ];
       }
+      if (country) params.push(country);
       if (salesReps.length > 0) params.push(...salesReps);
       if (startDate) params.push(startDate);
       if (endDate) params.push(endDate);
@@ -1389,6 +1482,48 @@ exports.getSalesRepMonthlyPerformance = async (req, res) => {
         endDate
       });
       throw queryErr;
+    }
+
+    // Fetch targets separately to avoid row multiplication
+    try {
+      const salesRepIds = rows.map(row => row.sales_rep_id);
+      if (salesRepIds.length > 0) {
+        const placeholders = salesRepIds.map(() => '?').join(',');
+        const [targets] = await db.query(`
+          SELECT 
+            sales_rep_id,
+            month,
+            vapes_target,
+            pouches_target
+          FROM sales_rep_targets
+          WHERE sales_rep_id IN (${placeholders}) AND year = ?
+        `, [...salesRepIds, currentYear]);
+
+        // Merge targets into rows
+        rows.forEach(row => {
+          const repTargets = targets.filter(t => t.sales_rep_id === row.sales_rep_id);
+          
+          // Initialize all target fields to 0
+          for (let i = 1; i <= 12; i++) {
+            const monthNames = ['january', 'february', 'march', 'april', 'may', 'june', 
+                               'july', 'august', 'september', 'october', 'november', 'december'];
+            row[`${monthNames[i-1]}_vapes_target`] = 0;
+            row[`${monthNames[i-1]}_pouches_target`] = 0;
+          }
+          
+          // Fill in actual target values
+          repTargets.forEach(target => {
+            const monthNames = ['january', 'february', 'march', 'april', 'may', 'june', 
+                               'july', 'august', 'september', 'october', 'november', 'december'];
+            const monthName = monthNames[target.month - 1];
+            row[`${monthName}_vapes_target`] = target.vapes_target || 0;
+            row[`${monthName}_pouches_target`] = target.pouches_target || 0;
+          });
+        });
+      }
+    } catch (targetsErr) {
+      console.error('Error fetching targets:', targetsErr.message);
+      // Continue without targets - they're optional
     }
 
     res.json(rows);

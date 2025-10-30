@@ -33,7 +33,12 @@ const salesOrderController = {
           c.name as customer_name, 
           c.balance as customer_balance,
           u.full_name as created_by_name,
-          sr.name as salesrep
+          sr.name as salesrep,
+          (
+            SELECT COALESCE(SUM(r.amount), 0)
+            FROM receipts r
+            WHERE r.invoice_number = so.id AND r.status = 'confirmed'
+          ) as amount_paid
         FROM sales_orders so
         LEFT JOIN Clients c ON so.client_id = c.id
         LEFT JOIN users u ON so.created_by = u.id

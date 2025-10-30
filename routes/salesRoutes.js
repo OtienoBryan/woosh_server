@@ -88,6 +88,9 @@ router.get('/sales-rep-monthly-performance', salesController.getSalesRepMonthlyP
 // Get detailed sales data for a specific client and month
 router.get('/client-month-details', salesController.getClientMonthDetails);
 
+// Get detailed sales data for a specific client for the entire year
+router.get('/client-year-details', salesController.getClientYearDetails);
+
 // Get sales rep master report
 router.get('/rep/master-report', salesController.getSalesRepMasterReport);
 

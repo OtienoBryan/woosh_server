@@ -74,13 +74,21 @@ const clientController = {
                   oa.name as outlet_account_name,
                   co.name as country_name,
                   r.name as region_name,
-                  rt.name as route_name
+                  rt.name as route_name,
+                  ca.id as assignment_id,
+                  ca.salesRepId as assignment_salesRepId,
+                  ca.assignedAt as assignment_assignedAt,
+                  sr.name as sales_rep_name,
+                  sr.email as sales_rep_email,
+                  sr.phoneNumber as sales_rep_phone
            FROM Clients c
            LEFT JOIN outlet_categories oc ON c.client_type = oc.id
            LEFT JOIN outlet_accounts oa ON c.outlet_account = oa.id
            LEFT JOIN Country co ON c.countryId = co.id
            LEFT JOIN Regions r ON c.region_id = r.id
            LEFT JOIN routes rt ON c.route_id_update = rt.id
+           LEFT JOIN ClientAssignment ca ON c.id = ca.outletId AND ca.status = 'active'
+           LEFT JOIN SalesRep sr ON ca.salesRepId = sr.id AND sr.status = 1
            ${where} ${orderBy}`,
           params
         );
@@ -94,13 +102,21 @@ const clientController = {
                   oa.name as outlet_account_name,
                   co.name as country_name,
                   r.name as region_name,
-                  rt.name as route_name
+                  rt.name as route_name,
+                  ca.id as assignment_id,
+                  ca.salesRepId as assignment_salesRepId,
+                  ca.assignedAt as assignment_assignedAt,
+                  sr.name as sales_rep_name,
+                  sr.email as sales_rep_email,
+                  sr.phoneNumber as sales_rep_phone
            FROM Clients c
            LEFT JOIN outlet_categories oc ON c.client_type = oc.id
            LEFT JOIN outlet_accounts oa ON c.outlet_account = oa.id
            LEFT JOIN Country co ON c.countryId = co.id
            LEFT JOIN Regions r ON c.region_id = r.id
            LEFT JOIN routes rt ON c.route_id_update = rt.id
+           LEFT JOIN ClientAssignment ca ON c.id = ca.outletId AND ca.status = 'active'
+           LEFT JOIN SalesRep sr ON ca.salesRepId = sr.id AND sr.status = 1
            ${where} ${orderBy} LIMIT ? OFFSET ?`,
           [...params, limit, offset]
         );

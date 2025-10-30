@@ -535,6 +535,54 @@ const receivablesController = {
       console.error('Error fetching receipts by invoice:', error);
       res.status(500).json({ success: false, error: 'Failed to fetch receipts by invoice' });
     }
+  },
+
+  // OPTIMIZED: Get amounts paid for multiple invoices in bulk (single query)
+  getBulkAmountsPaid: async (req, res) => {
+    try {
+      const { invoice_ids } = req.body;
+      
+      if (!invoice_ids || !Array.isArray(invoice_ids) || invoice_ids.length === 0) {
+        return res.json({ success: true, data: {} });
+      }
+
+      console.log(`Fetching amounts paid for ${invoice_ids.length} invoices in bulk`);
+      
+      // Single optimized query to get amounts paid for all invoices
+      const placeholders = invoice_ids.map(() => '?').join(',');
+      const [receipts] = await db.query(
+        `SELECT 
+          r.invoice_number,
+          SUM(CASE WHEN r.status = 'confirmed' THEN r.amount ELSE 0 END) as total_amount_paid
+         FROM receipts r
+         WHERE r.invoice_number IN (${placeholders})
+         GROUP BY r.invoice_number`,
+        invoice_ids
+      );
+      
+      // Convert to object with invoice_id as key
+      const amountsPaid = {};
+      receipts.forEach(row => {
+        amountsPaid[row.invoice_number] = parseFloat(row.total_amount_paid || 0);
+      });
+      
+      // Ensure all requested invoice_ids have an entry (even if 0)
+      invoice_ids.forEach(id => {
+        if (!(id in amountsPaid)) {
+          amountsPaid[id] = 0;
+        }
+      });
+      
+      console.log(`Fetched amounts for ${Object.keys(amountsPaid).length} invoices`);
+      
+      res.json({ 
+        success: true, 
+        data: amountsPaid
+      });
+    } catch (error) {
+      console.error('Error fetching bulk amounts paid:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch bulk amounts paid' });
+    }
   }
 };
 

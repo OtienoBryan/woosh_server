@@ -254,6 +254,7 @@ router.post('/receivables/confirm-payment', authenticateToken, receivablesContro
 router.get('/receipts', authenticateToken, receivablesController.listReceipts);
 router.get('/receipts/invoice/:invoice_id/pending', authenticateToken, receivablesController.getPendingReceiptsForInvoice);
 router.get('/receipts/invoice/:invoice_id', authenticateToken, receivablesController.getReceiptsByInvoice);
+router.post('/receipts/bulk-amounts-paid', authenticateToken, receivablesController.getBulkAmountsPaid);
 router.get('/clients/:clientId/outstanding-balance', authenticateToken, receivablesController.getClientOutstandingBalance);
 router.put('/receipts/:id/confirm', authenticateToken, receivablesController.confirmPayment);
 router.put('/receipts/:id/decline', authenticateToken, receivablesController.declinePayment);

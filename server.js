@@ -18,7 +18,7 @@ process.env.TZ = 'UTC';
 process.env.NODE_TZ = 'UTC';
 
 // Try to require database and other modules, but don't crash if they fail
-let db, staffController, roleController, multer, upload, uploadController, teamController, clientController, branchController, serviceChargeController, journeyPlanController, payrollRoutes, financialRoutes, staffRoutes, chatRoutes, clientRoutes, salesRoutes, managerRoutes, noticeRoutes, salesRepLeaveRoutes, calendarTaskRoutes, userRoutes, loginHistoryRoutes, journeyPlanRoutes, riderRoutes, myVisibilityReportRoutes, feedbackReportRoutes, availabilityReportRoutes, leaveRequestRoutes, supplierRoutes, receiptRoutes, myAssetsRoutes, faultyProductsRoutes, storeRoutes, routesRoutes, upliftSaleRoutes;
+let db, staffController, roleController, multer, upload, uploadController, teamController, clientController, branchController, serviceChargeController, journeyPlanController, payrollRoutes, financialRoutes, staffRoutes, chatRoutes, clientRoutes, salesRoutes, managerRoutes, noticeRoutes, salesRepLeaveRoutes, calendarTaskRoutes, userRoutes, loginHistoryRoutes, journeyPlanRoutes, riderRoutes, myVisibilityReportRoutes, feedbackReportRoutes, availabilityReportRoutes, leaveRequestRoutes, supplierRoutes, receiptRoutes, myAssetsRoutes, faultyProductsRoutes, storeRoutes, routesRoutes, upliftSaleRoutes, dashboardRoutes, customerOrdersRoutes;
 
 try {
   db = require('./database/db');
@@ -62,6 +62,8 @@ try {
   clientAssignmentRoutes = require('./routes/clientAssignmentRoutes');
   routesRoutes = require('./routes/routesRoutes');
   upliftSaleRoutes = require('./routes/upliftSaleRoutes');
+  dashboardRoutes = require('./routes/dashboardRoutes');
+  customerOrdersRoutes = require('./routes/customerOrdersRoutes');
 } catch (error) {
   console.log('Some modules failed to load:', error.message);
 }
@@ -512,6 +514,11 @@ console.log('Financial routes registered successfully');
 app.use('/api/payroll', payrollRoutes);
 app.use('/api', staffRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/dashboard', dashboardRoutes);
+if (customerOrdersRoutes) {
+  app.use('/api/customer-orders', customerOrdersRoutes);
+  console.log('Customer orders routes registered successfully');
+}
 app.use('/api/managers', managerRoutes);
 app.use('/api/sales', salesRoutes);
 app.use('/api/notices', noticeRoutes);

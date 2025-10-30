@@ -1767,19 +1767,6 @@ const reportsController = {
         };
       }
 
-      // Get account type names mapping
-      const accountTypeNames = {
-        1: 'Asset',
-        2: 'Fixed Asset',
-        3: 'Liability',
-        4: 'Revenue',
-        5: 'Expense',
-        13: 'Accounts Payable',
-        15: 'Equity',
-        16: 'Cost of Goods Sold',
-        17: 'Depreciation Expense'
-      };
-
       let accounts = [];
 
       // If date range is specified, calculate opening, period, and closing balances
@@ -1791,13 +1778,15 @@ const reportsController = {
             coa.account_code,
             coa.account_name,
             coa.account_type,
+            at.account_type as account_type_name,
             COALESCE(SUM(jel.debit_amount), 0) as opening_debit,
             COALESCE(SUM(jel.credit_amount), 0) as opening_credit
           FROM chart_of_accounts coa
+          LEFT JOIN account_types at ON coa.account_type = at.id
           LEFT JOIN journal_entry_lines jel ON coa.id = jel.account_id
           LEFT JOIN journal_entries je ON jel.journal_entry_id = je.id AND je.entry_date < ?
           WHERE coa.is_active = true
-          GROUP BY coa.id, coa.account_code, coa.account_name, coa.account_type
+          GROUP BY coa.id, coa.account_code, coa.account_name, coa.account_type, at.account_type
           ORDER BY coa.account_code
         `, [from_date]);
 
@@ -1808,13 +1797,15 @@ const reportsController = {
             coa.account_code,
             coa.account_name,
             coa.account_type,
+            at.account_type as account_type_name,
             COALESCE(SUM(jel.debit_amount), 0) as period_debit,
             COALESCE(SUM(jel.credit_amount), 0) as period_credit
           FROM chart_of_accounts coa
+          LEFT JOIN account_types at ON coa.account_type = at.id
           LEFT JOIN journal_entry_lines jel ON coa.id = jel.account_id
           LEFT JOIN journal_entries je ON jel.journal_entry_id = je.id AND je.entry_date >= ? AND je.entry_date <= ?
           WHERE coa.is_active = true
-          GROUP BY coa.id, coa.account_code, coa.account_name, coa.account_type
+          GROUP BY coa.id, coa.account_code, coa.account_name, coa.account_type, at.account_type
           ORDER BY coa.account_code
         `, [from_date, to_date]);
 
@@ -1827,7 +1818,7 @@ const reportsController = {
             account_code: acc.account_code,
             account_name: acc.account_name,
             account_type: acc.account_type,
-            account_type_name: accountTypeNames[acc.account_type] || 'Other',
+            account_type_name: acc.account_type_name || 'Other',
             opening_debit: parseFloat(acc.opening_debit) || 0,
             opening_credit: parseFloat(acc.opening_credit) || 0,
             period_debit: 0,
@@ -1846,7 +1837,7 @@ const reportsController = {
               account_code: acc.account_code,
               account_name: acc.account_name,
               account_type: acc.account_type,
-              account_type_name: accountTypeNames[acc.account_type] || 'Other',
+              account_type_name: acc.account_type_name || 'Other',
               opening_debit: 0,
               opening_credit: 0,
               period_debit: parseFloat(acc.period_debit) || 0,
@@ -1880,13 +1871,15 @@ const reportsController = {
             coa.account_code,
             coa.account_name,
             coa.account_type,
+            at.account_type as account_type_name,
             COALESCE(SUM(jel.debit_amount), 0) as total_debit,
             COALESCE(SUM(jel.credit_amount), 0) as total_credit
           FROM chart_of_accounts coa
+          LEFT JOIN account_types at ON coa.account_type = at.id
           LEFT JOIN journal_entry_lines jel ON coa.id = jel.account_id
           LEFT JOIN journal_entries je ON jel.journal_entry_id = je.id
           WHERE coa.is_active = true ${dateFilter}
-          GROUP BY coa.id, coa.account_code, coa.account_name, coa.account_type
+          GROUP BY coa.id, coa.account_code, coa.account_name, coa.account_type, at.account_type
           ORDER BY coa.account_code
         `, params);
 
@@ -1899,7 +1892,7 @@ const reportsController = {
             account_code: acc.account_code,
             account_name: acc.account_name,
             account_type: acc.account_type,
-            account_type_name: accountTypeNames[acc.account_type] || 'Other',
+            account_type_name: acc.account_type_name || 'Other',
             debit: debit,
             credit: credit,
             balance: balance

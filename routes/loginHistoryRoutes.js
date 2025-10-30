@@ -11,7 +11,21 @@ router.get('/', async (req, res) => {
   console.log('Request method:', req.method);
   console.log('Request headers:', req.headers);
   try {
-    const [rows] = await db.query('SELECT id, userId, sessionStart, sessionEnd FROM LoginHistory');
+    const { startDate, endDate } = req.query;
+    let sql = 'SELECT id, userId, sessionStart, sessionEnd FROM LoginHistory';
+    const params = [];
+    if (startDate && endDate) {
+      sql += ' WHERE DATE(sessionStart) BETWEEN ? AND ?';
+      params.push(startDate, endDate);
+    } else if (startDate) {
+      sql += ' WHERE DATE(sessionStart) >= ?';
+      params.push(startDate);
+    } else if (endDate) {
+      sql += ' WHERE DATE(sessionStart) <= ?';
+      params.push(endDate);
+    }
+    sql += ' ORDER BY sessionStart DESC';
+    const [rows] = await db.query(sql, params);
     res.json(rows);
   } catch (err) {
     console.error('Error in /api/login-history:', err);

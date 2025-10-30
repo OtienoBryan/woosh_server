@@ -1,21 +1,111 @@
 const db = require('../database/db');
 
 const journeyPlanController = {
-  // Get all journey plans
+  // Get route compliance summary per sales rep
+  getRouteCompliance: async (req, res) => {
+    try {
+      const { startDate, endDate, country } = req.query;
+
+      const dateParams = [];
+      const dateFilter = [];
+      if (startDate && endDate) {
+        dateFilter.push('DATE(jp.date) BETWEEN ? AND ?');
+        dateParams.push(startDate, endDate);
+      } else if (startDate) {
+        dateFilter.push('DATE(jp.date) >= ?');
+        dateParams.push(startDate);
+      } else if (endDate) {
+        dateFilter.push('DATE(jp.date) <= ?');
+        dateParams.push(endDate);
+      }
+
+      const whereClause = dateFilter.length ? `WHERE ${dateFilter.join(' AND ')}` : '';
+      
+      // Add country filter to WHERE clause for SalesRep
+      let countryFilter = '';
+      const allParams = [];
+      if (country) {
+        countryFilter = 'sr.country = ?';
+        allParams.push(country);
+      }
+      
+      const sql = `
+        SELECT 
+          sr.id AS salesRepId,
+          sr.name AS salesRepName,
+          COALESCE(COUNT(jp.id), 0) AS plannedVisits,
+          COALESCE(SUM(CASE 
+            WHEN jp.checkInTime IS NOT NULL OR jp.status IN (1,2) THEN 1 
+            ELSE 0 
+          END), 0) AS achievedVisits
+        FROM SalesRep sr
+        LEFT JOIN JourneyPlan jp 
+          ON sr.id = jp.userId
+          ${whereClause ? `AND ${dateFilter.join(' AND ')}` : ''}
+        WHERE sr.status = 1
+        ${countryFilter ? `AND ${countryFilter}` : ''}
+        GROUP BY sr.id, sr.name
+        ORDER BY sr.name ASC
+      `;
+
+      // Combine params: date params (for JOIN ON clause) + country param (for WHERE clause)
+      const queryParams = [...dateParams, ...allParams];
+
+      const [rows] = await db.query(sql, queryParams);
+
+      const data = rows.map(r => {
+        const planned = Number(r.plannedVisits) || 0;
+        const achieved = Number(r.achievedVisits) || 0;
+        const compliancePct = planned > 0 ? Number(((achieved / planned) * 100).toFixed(1)) : 0;
+        return {
+          salesRepId: r.salesRepId,
+          salesRepName: r.salesRepName,
+          plannedVisits: planned,
+          achievedVisits: achieved,
+          compliancePct
+        };
+      });
+
+      res.json({ success: true, data });
+    } catch (error) {
+      console.error('Get route compliance error:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch route compliance', error: error.message });
+    }
+  },
+  // Get all journey plans (with optional date filtering)
   getAllJourneyPlans: async (req, res) => {
     try {
-      const [plans] = await db.query(`
-        SELECT jp.*, 
-               s.name as user_name,
-               c.name as client_name,
-               c.name as client_company_name,
-               r.name as route_name
+      const { startDate, endDate } = req.query;
+
+      // Only select fields used by OverallAttendancePage for speed
+      let sql = `
+        SELECT 
+          jp.id,
+          jp.userId,
+          jp.clientId,
+          jp.date,
+          jp.checkInTime,
+          jp.checkoutTime
         FROM JourneyPlan jp
-        LEFT JOIN SalesRep s ON jp.userId = s.id
-        LEFT JOIN Clients c ON jp.clientId = c.id
-        LEFT JOIN routes r ON jp.routeId = r.id
-        ORDER BY jp.date DESC, jp.time ASC
-      `);
+      `;
+      const params = [];
+      const where = [];
+      if (startDate && endDate) {
+        where.push('DATE(jp.date) BETWEEN ? AND ?');
+        params.push(startDate, endDate);
+      } else if (startDate) {
+        where.push('DATE(jp.date) >= ?');
+        params.push(startDate);
+      } else if (endDate) {
+        where.push('DATE(jp.date) <= ?');
+        params.push(endDate);
+      }
+      if (where.length) {
+        sql += ' WHERE ' + where.join(' AND ');
+      }
+      sql += ' ORDER BY jp.date DESC';
+
+      const [plans] = await db.query(sql, params);
       
       res.json(plans);
     } catch (error) {

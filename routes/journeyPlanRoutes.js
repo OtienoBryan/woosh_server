@@ -9,6 +9,9 @@ router.use(authenticateToken);
 // Get all journey plans
 router.get('/', journeyPlanController.getAllJourneyPlans);
 
+// Get route compliance summary
+router.get('/compliance', journeyPlanController.getRouteCompliance);
+
 // Get journey plans by user ID
 router.get('/user/:userId', journeyPlanController.getJourneyPlansByUser);
 

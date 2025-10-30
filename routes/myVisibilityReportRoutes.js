@@ -8,7 +8,10 @@ const { authenticateToken } = require('../middleware/auth');
 // Apply authentication middleware to all my visibility report routes
 router.use(authenticateToken);
 
-// Simple test route
+// Get filter options (outlets and countries)
+router.get('/filter-options', myVisibilityReportController.getFilterOptions);
+
+// Get all visibility reports with pagination and filtering
 router.get('/', myVisibilityReportController.getAllMyVisibilityReports);
 
 module.exports = router; 

@@ -6,14 +6,20 @@ exports.getAllAvailabilityReports = async (req, res) => {
     const { startDate, endDate, currentDate, page = 1, limit = 10, country, salesRep, search } = req.query;
     const isViewAll = parseInt(limit) === -1;
     const offset = isViewAll ? 0 : (parseInt(page) - 1) * parseInt(limit);
+    
+    // Optimized query with indexed columns first and category information
     let sql = `
-      SELECT ar.id, ar.reportId, ar.comment, ar.createdAt,
+      SELECT ar.id, ar.reportId, ar.comment, ar.createdAt, ar.clientId, ar.userId, ar.productId,
              c.name AS clientName, co.name AS countryName, u.name AS salesRepName,
-             ar.ProductName AS productName,ar.comment AS comment, ar.quantity
+             ar.ProductName AS productName, ar.quantity,
+             cat.id AS categoryId, cat.name AS categoryName, 
+             COALESCE(cat.orderIndex, 999) AS categoryOrder
       FROM ProductReport ar
       LEFT JOIN Clients c ON ar.clientId = c.id
       LEFT JOIN Country co ON c.countryId = co.id
       LEFT JOIN SalesRep u ON ar.userId = u.id
+      LEFT JOIN products p ON ar.productId = p.id
+      LEFT JOIN Category cat ON p.category_id = cat.id
     `;
     let countSql = `
       SELECT COUNT(*) as total
@@ -21,15 +27,21 @@ exports.getAllAvailabilityReports = async (req, res) => {
       LEFT JOIN Clients c ON ar.clientId = c.id
       LEFT JOIN Country co ON c.countryId = co.id
       LEFT JOIN SalesRep u ON ar.userId = u.id
+      LEFT JOIN products p ON ar.productId = p.id
+      LEFT JOIN Category cat ON p.category_id = cat.id
     `;
     const params = [];
     const countParams = [];
     let whereConditions = [];
+    
+    // Date filtering - optimized for index usage
+    // Always require a date filter for performance (defaults to today on frontend)
     if (currentDate) {
       whereConditions.push(`DATE(ar.createdAt) = ?`);
       params.push(currentDate);
       countParams.push(currentDate);
     } else if (startDate && endDate) {
+      // Use BETWEEN for date range (uses index efficiently)
       whereConditions.push(`DATE(ar.createdAt) BETWEEN ? AND ?`);
       params.push(startDate, endDate);
       countParams.push(startDate, endDate);
@@ -41,6 +53,12 @@ exports.getAllAvailabilityReports = async (req, res) => {
       whereConditions.push(`DATE(ar.createdAt) <= ?`);
       params.push(endDate);
       countParams.push(endDate);
+    } else {
+      // If no date provided, default to today for performance
+      const today = new Date().toISOString().split('T')[0];
+      whereConditions.push(`DATE(ar.createdAt) = ?`);
+      params.push(today);
+      countParams.push(today);
     }
     if (country && country !== 'all') {
       whereConditions.push(`co.name = ?`);
@@ -68,9 +86,16 @@ exports.getAllAvailabilityReports = async (req, res) => {
       sql += ` LIMIT ? OFFSET ?`;
       params.push(parseInt(limit), offset);
     }
+    
+    // Log query for performance monitoring
+    console.log(`Fetching availability reports with date filter: ${startDate || endDate || currentDate || 'today'}`);
+    
     const [results] = await db.query(sql, params);
     const [countResult] = await db.query(countSql, countParams);
     const total = countResult[0].total;
+    
+    console.log(`Query returned ${results.length} reports out of ${total} total`);
+    
     res.json({ 
       success: true, 
       reports: results,

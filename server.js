@@ -18,7 +18,7 @@ process.env.TZ = 'UTC';
 process.env.NODE_TZ = 'UTC';
 
 // Try to require database and other modules, but don't crash if they fail
-let db, staffController, roleController, multer, upload, uploadController, teamController, clientController, branchController, serviceChargeController, journeyPlanController, payrollRoutes, financialRoutes, staffRoutes, chatRoutes, clientRoutes, salesRoutes, managerRoutes, noticeRoutes, salesRepLeaveRoutes, calendarTaskRoutes, userRoutes, loginHistoryRoutes, journeyPlanRoutes, riderRoutes, myVisibilityReportRoutes, feedbackReportRoutes, availabilityReportRoutes, leaveRequestRoutes, supplierRoutes, receiptRoutes, myAssetsRoutes, faultyProductsRoutes, storeRoutes, routesRoutes, upliftSaleRoutes, dashboardRoutes, customerOrdersRoutes;
+let db, staffController, roleController, multer, upload, uploadController, teamController, clientController, branchController, serviceChargeController, journeyPlanController, payrollRoutes, financialRoutes, staffRoutes, chatRoutes, clientRoutes, salesRoutes, managerRoutes, noticeRoutes, salesRepLeaveRoutes, calendarTaskRoutes, userRoutes, loginHistoryRoutes, journeyPlanRoutes, riderRoutes, myVisibilityReportRoutes, feedbackReportRoutes, availabilityReportRoutes, leaveRequestRoutes, supplierRoutes, receiptRoutes, myAssetsRoutes, faultyProductsRoutes, storeRoutes, routesRoutes, upliftSaleRoutes, dashboardRoutes, customerOrdersRoutes, categoryRoutes;
 
 try {
   db = require('./database/db');
@@ -64,6 +64,7 @@ try {
   upliftSaleRoutes = require('./routes/upliftSaleRoutes');
   dashboardRoutes = require('./routes/dashboardRoutes');
   customerOrdersRoutes = require('./routes/customerOrdersRoutes');
+  categoryRoutes = require('./routes/categoryRoutes');
 } catch (error) {
   console.log('Some modules failed to load:', error.message);
 }
@@ -153,6 +154,10 @@ app.use('/api/my-visibility-reports', myVisibilityReportRoutes);
 app.use('/api/feedback-reports', feedbackReportRoutes);
 app.use('/api/availability-reports', availabilityReportRoutes);
 app.use('/api/leave-requests', leaveRequestRoutes);
+if (categoryRoutes) {
+  app.use('/api/categories', categoryRoutes);
+  console.log('Category routes registered successfully');
+}
 
 // Helper function to map database fields to frontend fields
 const mapRequestFields = (request) => {

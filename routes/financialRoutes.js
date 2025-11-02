@@ -60,6 +60,7 @@ const creditNoteController = require('../controllers/creditNoteController');
 
 // Chart of Accounts Routes (Protected with authentication)
 router.get('/accounts', authenticateToken, chartOfAccountsController.getAllAccounts);
+router.get('/accounts/types', authenticateToken, chartOfAccountsController.getAllAccountTypes);
 router.get('/accounts/type/:account_type', authenticateToken, chartOfAccountsController.getAccountsByType);
 router.get('/expense-types', authenticateToken, chartOfAccountsController.getExpenseTypes);
 router.get('/accounts/type16', authenticateToken, chartOfAccountsController.getAccountsByType16);

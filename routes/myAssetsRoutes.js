@@ -44,4 +44,7 @@ router.delete('/:id', myAssetsController.deleteAsset);
 // Get asset statistics
 router.get('/stats/overview', myAssetsController.getAssetStats);
 
+// Bulk create assets
+router.post('/bulk-create', myAssetsController.bulkCreateAssets);
+
 module.exports = router; 

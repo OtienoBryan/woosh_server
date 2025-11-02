@@ -1,4 +1,5 @@
-const connection = require('../database/db');
+const db = require('../database/db');
+const connection = db;
 
 const myAssetsController = {
   // Get all assets
@@ -392,6 +393,116 @@ const myAssetsController = {
         success: false,
         error: 'Failed to fetch asset statistics'
       });
+    }
+  },
+
+  // Bulk create assets for purchase order
+  bulkCreateAssets: async (req, res) => {
+    const connection = await db.getConnection();
+    
+    try {
+      await connection.beginTransaction();
+      
+      const { supplier_id, purchase_date, notes, assets } = req.body;
+
+      if (!supplier_id || !purchase_date || !assets || !Array.isArray(assets) || assets.length === 0) {
+        await connection.rollback();
+        return res.status(400).json({
+          success: false,
+          error: 'Missing required fields'
+        });
+      }
+
+      // Check if supplier exists
+      const [suppliers] = await connection.query(`
+        SELECT id FROM suppliers WHERE id = ?
+      `, [supplier_id]);
+
+      if (suppliers.length === 0) {
+        await connection.rollback();
+        return res.status(400).json({
+          success: false,
+          error: 'Supplier not found'
+        });
+      }
+
+      const createdAssets = [];
+      let assetCodeCounter = 1;
+
+      // Process each asset
+      for (const asset of assets) {
+        const { asset_name, asset_type, price, quantity } = asset;
+
+        if (!asset_name || !asset_type || !price || !quantity) {
+          await connection.rollback();
+          return res.status(400).json({
+            success: false,
+            error: 'Each asset must have name, type, price, and quantity'
+          });
+        }
+
+        // Generate unique asset code
+        let asset_code = `AST${String(assetCodeCounter).padStart(6, '0')}`;
+        
+        // Check if asset_code exists, increment if it does
+        const [existingAssets] = await connection.query(`
+          SELECT id FROM my_assets WHERE asset_code = ?
+        `, [asset_code]);
+        
+        while (existingAssets.length > 0) {
+          assetCodeCounter++;
+          asset_code = `AST${String(assetCodeCounter).padStart(6, '0')}`;
+          const [checkExisting] = await connection.query(`
+            SELECT id FROM my_assets WHERE asset_code = ?
+          `, [asset_code]);
+          existingAssets.length = checkExisting.length;
+        }
+
+        // Insert asset
+        const [result] = await connection.query(`
+          INSERT INTO my_assets (
+            asset_code, asset_name, asset_type, purchase_date, 
+            location, supplier_id, price, quantity
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+          asset_code,
+          asset_name,
+          asset_type,
+          purchase_date,
+          'N/A',
+          supplier_id,
+          price,
+          quantity
+        ]);
+
+        // Get the created asset with supplier details
+        const [createdAsset] = await connection.query(`
+          SELECT ma.*, s.company_name as supplier_name
+          FROM my_assets ma
+          LEFT JOIN suppliers s ON ma.supplier_id = s.id
+          WHERE ma.id = ?
+        `, [result.insertId]);
+
+        createdAssets.push(createdAsset[0]);
+        assetCodeCounter++;
+      }
+
+      await connection.commit();
+
+      res.status(201).json({
+        success: true,
+        data: createdAssets,
+        message: `${createdAssets.length} asset(s) created successfully`
+      });
+    } catch (error) {
+      await connection.rollback();
+      console.error('Error bulk creating assets:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to create assets'
+      });
+    } finally {
+      connection.release();
     }
   }
 };

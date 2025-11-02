@@ -378,18 +378,41 @@ const purchaseOrderController = {
         return res.status(404).json({ success: false, error: 'Store not found' });
       }
 
+      // Get PO items to calculate correct tax-exclusive unit costs
+      const [poItemsForInventory] = await connection.query(`
+        SELECT product_id, tax_type, unit_price 
+        FROM purchase_order_items 
+        WHERE purchase_order_id = ?
+      `, [purchaseOrderId]);
+
       // Process each received item
       for (const item of items) {
-        const { product_id, received_quantity, unit_cost } = item;
-        const total_cost = received_quantity * unit_cost;
+        const { product_id, received_quantity } = item;
+        
+        // Find matching PO item to get correct pricing
+        const poItem = poItemsForInventory.find(poi => poi.product_id === product_id);
+        if (!poItem) {
+          throw new Error(`PO item not found for product ${product_id}`);
+        }
+        
+        const taxType = poItem.tax_type || '16%';
+        const taxRate = taxType === '16%' ? 0.16 : 0;
+        const poUnitPrice = parseFloat(poItem.unit_price) || 0;
+        
+        // Calculate tax-exclusive unit cost from PO's tax-inclusive unit_price
+        const taxExclusiveUnitCost = taxRate > 0 
+          ? poUnitPrice / (1 + taxRate) 
+          : poUnitPrice;
+        
+        const total_cost = received_quantity * taxExclusiveUnitCost;
 
-        // Record the receipt
+        // Record the receipt (use tax-exclusive unit cost)
         await connection.query(`
           INSERT INTO inventory_receipts (
             purchase_order_id, product_id, store_id, received_quantity, 
             unit_cost, total_cost, received_by, notes
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `, [purchaseOrderId, product_id, storeId, received_quantity, unit_cost, total_cost, 1, notes]);
+        `, [purchaseOrderId, product_id, storeId, received_quantity, taxExclusiveUnitCost, total_cost, 1, notes]);
 
         // Update store inventory (running balance)
         await connection.query(`
@@ -411,7 +434,7 @@ const purchaseOrderController = {
           `INSERT INTO inventory_transactions 
             (product_id, reference, amount_in, amount_out, unit_cost, total_cost, balance, date_received, store_id, staff_id)
            VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
-          [product_id, purchaseOrders[0].po_number, received_quantity, 0, unit_cost, total_cost, newBalance, storeId, 1]
+          [product_id, purchaseOrders[0].po_number, received_quantity, 0, taxExclusiveUnitCost, total_cost, newBalance, storeId, 1]
         );
         // --- End inventory_transactions insert ---
 
@@ -447,30 +470,42 @@ const purchaseOrderController = {
         );
       }
 
-      // Calculate total value received for this receipt (tax-exclusive)
-      let totalReceiptValue = 0;
-      for (const item of items) {
-        totalReceiptValue += item.received_quantity * item.unit_cost;
-      }
-
-      // Calculate tax amount for received items
-      // Get the purchase order items to determine tax type and calculate tax
+      // Calculate tax amount and tax-exclusive value for received items
+      // Get the purchase order items to determine tax type and calculate tax correctly
       const [poItems] = await connection.query(`
         SELECT product_id, tax_type, tax_amount, quantity, unit_price 
         FROM purchase_order_items 
         WHERE purchase_order_id = ?
       `, [purchaseOrderId]);
 
+      let totalReceiptValue = 0; // Tax-exclusive amount
       let totalTaxAmount = 0;
+      
       for (const receivedItem of items) {
         // Find matching PO item
         const poItem = poItems.find(poi => poi.product_id === receivedItem.product_id);
         if (poItem) {
           const taxType = poItem.tax_type || '16%';
           const taxRate = taxType === '16%' ? 0.16 : 0;
-          // Calculate tax on the received quantity at the unit cost
-          const itemTaxExclusiveAmount = receivedItem.received_quantity * receivedItem.unit_cost;
-          const itemTaxAmount = itemTaxExclusiveAmount * taxRate;
+          
+          // Use PO item's tax-inclusive unit_price to calculate tax correctly
+          // PO unit_price is tax-inclusive (as stored when creating PO)
+          const poUnitPrice = parseFloat(poItem.unit_price) || 0;
+          const receivedQty = receivedItem.received_quantity;
+          
+          // Calculate tax-inclusive amount for received quantity using PO's unit_price
+          const itemTaxInclusiveAmount = receivedQty * poUnitPrice;
+          
+          // Calculate tax-exclusive amount from tax-inclusive
+          const itemTaxExclusiveAmount = taxRate > 0 
+            ? itemTaxInclusiveAmount / (1 + taxRate) 
+            : itemTaxInclusiveAmount;
+          
+          // Calculate tax amount
+          const itemTaxAmount = itemTaxInclusiveAmount - itemTaxExclusiveAmount;
+          
+          // Accumulate totals using PO's original pricing (ensures accuracy)
+          totalReceiptValue += itemTaxExclusiveAmount;
           totalTaxAmount += itemTaxAmount;
         }
       }

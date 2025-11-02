@@ -73,6 +73,119 @@ const chartOfAccountsController = {
     }
   },
 
+  // Get all distinct account types
+  getAllAccountTypes: async (req, res) => {
+    try {
+      // Get distinct account types from chart_of_accounts and join with account_types for names
+      // Use LEFT JOIN so we get all types even if they don't exist in account_types table
+      const [rows] = await db.query(`
+        SELECT DISTINCT 
+          coa.account_type as id,
+          COALESCE(at.account_type, NULL) as name
+        FROM chart_of_accounts coa
+        LEFT JOIN account_types at ON coa.account_type = at.id
+        WHERE coa.is_active = 1
+        ORDER BY coa.account_type
+      `);
+
+      // Default name mapping for types not in account_types table
+      const nameMapping = {
+        1: 'Asset',
+        2: 'Liability',
+        4: 'Revenue',
+        5: 'Expense',
+        6: 'Assets',
+        7: 'Accounts Receivable',
+        8: 'Other Assets',
+        9: 'Cash',
+        10: 'Current Liability',
+        11: 'Non-Current Liability',
+        12: 'Long-term Liability',
+        13: 'Equity',
+        14: 'Retained Earnings',
+        15: 'Accounts Payable',
+        16: 'Expense Account',
+        17: 'Depreciation',
+        18: 'Other Expense',
+        19: 'Other Revenue'
+      };
+
+      // Color mapping fallback (can be enhanced later to store colors in account_types table)
+      const colorMapping = {
+        1: 'bg-green-100 text-green-800',
+        2: 'bg-red-100 text-red-800',
+        4: 'bg-blue-100 text-blue-800',
+        5: 'bg-orange-100 text-orange-800',
+        6: 'bg-green-100 text-green-800',
+        7: 'bg-cyan-100 text-cyan-800',
+        8: 'bg-green-200 text-green-900',
+        9: 'bg-emerald-100 text-emerald-800',
+        10: 'bg-red-100 text-red-800',
+        11: 'bg-red-200 text-red-900',
+        12: 'bg-red-300 text-red-950',
+        13: 'bg-purple-100 text-purple-800',
+        14: 'bg-purple-200 text-purple-900',
+        15: 'bg-rose-100 text-rose-800',
+        16: 'bg-amber-100 text-amber-800',
+        17: 'bg-gray-100 text-gray-800',
+        18: 'bg-orange-200 text-orange-900',
+        19: 'bg-blue-200 text-blue-900'
+      };
+
+      // Map the account types with names from database (or fallback) and colors from mapping
+      const accountTypes = rows.map(row => ({
+        id: row.id,
+        name: row.name || nameMapping[row.id] || `Type ${row.id}`,
+        color: colorMapping[row.id] || 'bg-gray-100 text-gray-800'
+      }));
+
+      res.json({ success: true, data: accountTypes });
+    } catch (error) {
+      console.error('Error fetching account types:', error);
+      // Fallback: If account_types table doesn't exist, use distinct types from chart_of_accounts
+      try {
+        const [fallbackRows] = await db.query(`
+          SELECT DISTINCT account_type 
+          FROM chart_of_accounts 
+          WHERE is_active = 1
+          ORDER BY account_type
+        `);
+
+        const nameMapping = {
+          1: 'Asset', 2: 'Liability', 4: 'Revenue', 5: 'Expense',
+          6: 'Assets', 7: 'Accounts Receivable', 8: 'Other Assets',
+          9: 'Cash', 10: 'Current Liability', 11: 'Non-Current Liability',
+          12: 'Long-term Liability', 13: 'Equity', 14: 'Retained Earnings',
+          15: 'Accounts Payable', 16: 'Expense Account', 17: 'Depreciation',
+          18: 'Other Expense', 19: 'Other Revenue'
+        };
+
+        const colorMapping = {
+          1: 'bg-green-100 text-green-800', 2: 'bg-red-100 text-red-800',
+          4: 'bg-blue-100 text-blue-800', 5: 'bg-orange-100 text-orange-800',
+          6: 'bg-green-100 text-green-800', 7: 'bg-cyan-100 text-cyan-800',
+          8: 'bg-green-200 text-green-900', 9: 'bg-emerald-100 text-emerald-800',
+          10: 'bg-red-100 text-red-800', 11: 'bg-red-200 text-red-900',
+          12: 'bg-red-300 text-red-950', 13: 'bg-purple-100 text-purple-800',
+          14: 'bg-purple-200 text-purple-900', 15: 'bg-rose-100 text-rose-800',
+          16: 'bg-amber-100 text-amber-800', 17: 'bg-gray-100 text-gray-800',
+          18: 'bg-orange-200 text-orange-900', 19: 'bg-blue-200 text-blue-900'
+        };
+
+        const accountTypes = fallbackRows.map(row => ({
+          id: row.account_type,
+          name: nameMapping[row.account_type] || `Type ${row.account_type}`,
+          color: colorMapping[row.account_type] || 'bg-gray-100 text-gray-800'
+        }));
+
+        res.json({ success: true, data: accountTypes });
+      } catch (fallbackError) {
+        console.error('Error in fallback:', fallbackError);
+        res.status(500).json({ success: false, error: 'Failed to fetch account types' });
+      }
+    }
+  },
+
   // Get account by ID
   getAccountById: async (req, res) => {
     try {
@@ -1932,7 +2045,7 @@ const getAllAssetsWithDepreciation = async (req, res) => {
   try {
     // Get all assets with their account info
     const [assets] = await db.query(`
-      SELECT a.*, coa.account_name AS category
+      SELECT a.*, coa.account_name AS account_name
       FROM assets a
       LEFT JOIN chart_of_accounts coa ON a.account_id = coa.id
       ORDER BY a.purchase_date DESC, a.id DESC
@@ -1956,11 +2069,30 @@ const getAllAssetsWithDepreciation = async (req, res) => {
       depreciationMap[row.asset_id] = parseFloat(row.total_depreciation || 0);
     }
 
-    // Attach depreciation and current value to each asset
+    // Attach depreciation and current value to each asset, and extract category from description
     const result = assets.map(asset => {
       const total_depreciation = depreciationMap[asset.id] || 0;
       const current_value = parseFloat(asset.purchase_value) - total_depreciation;
-      return { ...asset, total_depreciation, current_value };
+      
+      // Extract category from description if it starts with "Category: "
+      let category = null;
+      let description = asset.description || '';
+      
+      if (description && description.startsWith('Category: ')) {
+        const lines = description.split('\n');
+        const categoryLine = lines[0];
+        category = categoryLine.replace('Category: ', '').trim();
+        // Remove the category line from description if it exists
+        description = lines.slice(1).join('\n').trim() || null;
+      }
+      
+      return { 
+        ...asset, 
+        category,
+        description,
+        total_depreciation, 
+        current_value 
+      };
     });
     res.json({ success: true, data: result });
   } catch (error) {

@@ -573,6 +573,22 @@ const creditNoteController = {
         error: 'Failed to receive back items to stock'
       });
     }
+  },
+
+  // Get new credit notes count (optimized endpoint)
+  getNewCreditNotesCount: async (req, res) => {
+    try {
+      const [result] = await db.query(`
+        SELECT COUNT(*) as count
+        FROM credit_notes 
+        WHERE my_status = 0 OR my_status = '0'
+      `);
+      
+      res.json({ success: true, data: { count: result[0].count } });
+    } catch (error) {
+      console.error('Error fetching new credit notes count:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch new credit notes count' });
+    }
   }
 };
 

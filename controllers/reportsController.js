@@ -213,6 +213,8 @@ const reportsController = {
       const compareParams = compare_date ? [compare_date] : [];
 
       // Get all account balances for current period
+      // Note: account_type = 2 includes both assets (receivables, cash, bank) and liabilities
+      // We calculate receivables/cash/bank as debit - credit (assets), and other type 2 as credit - debit (liabilities)
       const [accountsResult] = await db.query(`
         SELECT 
           coa.id,
@@ -227,6 +229,20 @@ const reportsController = {
               WHEN coa.account_type = 6 THEN jel.debit_amount - jel.credit_amount
               WHEN coa.account_type = 7 THEN jel.debit_amount - jel.credit_amount
               WHEN coa.account_type = 9 THEN jel.debit_amount - jel.credit_amount
+              -- For account_type = 2: receivables, cash, and bank accounts are assets (debit - credit)
+              -- Other type 2 accounts are liabilities (credit - debit)
+              WHEN coa.account_type = 2 AND (
+                coa.account_code IN ('1100', '1200', '1300', '1000') OR
+                LOWER(coa.account_name) LIKE '%receivable%' OR
+                LOWER(coa.account_name) LIKE '%debtor%' OR
+                LOWER(coa.account_name) LIKE '%cash%' OR
+                LOWER(coa.account_name) LIKE '%bank%' OR
+                LOWER(coa.account_name) LIKE '%eco bank%' OR
+                LOWER(coa.account_name) LIKE '%ecobank%' OR
+                LOWER(coa.account_name) LIKE '%savings%' OR
+                LOWER(coa.account_name) LIKE '%checking%' OR
+                LOWER(coa.account_name) LIKE '%current account%'
+              ) THEN jel.debit_amount - jel.credit_amount
               WHEN coa.account_type = 2 THEN jel.credit_amount - jel.debit_amount
               WHEN coa.account_type = 13 THEN jel.credit_amount - jel.debit_amount
               ELSE jel.credit_amount - jel.debit_amount
@@ -254,6 +270,20 @@ const reportsController = {
                 WHEN coa.account_type = 6 THEN jel.debit_amount - jel.credit_amount
                 WHEN coa.account_type = 7 THEN jel.debit_amount - jel.credit_amount
                 WHEN coa.account_type = 9 THEN jel.debit_amount - jel.credit_amount
+                -- For account_type = 2: receivables, cash, and bank accounts are assets (debit - credit)
+                -- Other type 2 accounts are liabilities (credit - debit)
+                WHEN coa.account_type = 2 AND (
+                  coa.account_code IN ('1100', '1200', '1300', '1000') OR
+                  LOWER(coa.account_name) LIKE '%receivable%' OR
+                  LOWER(coa.account_name) LIKE '%debtor%' OR
+                  LOWER(coa.account_name) LIKE '%cash%' OR
+                  LOWER(coa.account_name) LIKE '%bank%' OR
+                  LOWER(coa.account_name) LIKE '%eco bank%' OR
+                  LOWER(coa.account_name) LIKE '%ecobank%' OR
+                  LOWER(coa.account_name) LIKE '%savings%' OR
+                  LOWER(coa.account_name) LIKE '%checking%' OR
+                  LOWER(coa.account_name) LIKE '%current account%'
+                ) THEN jel.debit_amount - jel.credit_amount
                 WHEN coa.account_type = 2 THEN jel.credit_amount - jel.debit_amount
                 WHEN coa.account_type = 13 THEN jel.credit_amount - jel.debit_amount
                 ELSE jel.credit_amount - jel.debit_amount
@@ -379,12 +409,67 @@ const reportsController = {
 
       // Group accounts by type
       const assets = accountsResult.filter(a => a.account_type === 1);
-      let liabilities = accountsResult.filter(a => a.account_type === 2);
+      const allType2Accounts = accountsResult.filter(a => a.account_type === 2);
       const equity = accountsResult.filter(a => a.account_type === 13);
       // --- Add this: get all cash and equivalents accounts ---
       const cashAndEquivalents = accountsResult.filter(a => a.account_type === 9);
-      // --- Add this: get all accounts receivable ---
-      const accountsReceivable = accountsResult.filter(a => a.account_type === 2);
+      
+      // --- Separate receivables and cash/bank accounts from liabilities within account_type = 2 ---
+      // Note: SQL query now calculates receivables/cash/bank correctly as debit - credit (assets)
+      // So we just need to separate them from actual liabilities, no need to negate balances
+      const receivablesAccountCodes = ['1100', '1200', '1300'];
+      const cashBankAccountCodes = ['1000']; // Add cash account codes if needed
+      
+      // Helper function to check if an account is a cash/bank account
+      const isCashOrBankAccount = (account) => {
+        const name = account.account_name.toLowerCase();
+        return cashBankAccountCodes.includes(account.account_code) ||
+               name.includes('cash') ||
+               name.includes('bank') ||
+               name.includes('eco bank') ||
+               name.includes('ecobank') ||
+               name.includes('savings') ||
+               name.includes('checking') ||
+               name.includes('current account');
+      };
+      
+      // Helper function to check if an account is a receivable
+      const isReceivable = (account) => {
+        return receivablesAccountCodes.includes(account.account_code) ||
+               account.account_name.toLowerCase().includes('receivable') ||
+               account.account_name.toLowerCase().includes('debtor');
+      };
+      
+      // Helper function to format account data with comparative balances
+      const formatAccountData = (account) => {
+        const balance = typeof account.balance === 'string' ? parseFloat(account.balance) : Number(account.balance) || 0;
+        const comparativeBalance = comparativeBalances[account.account_code] || 0;
+        return {
+          ...account,
+          balance,
+          comparative_balance: comparativeBalance,
+          change: balance - comparativeBalance,
+          change_percentage: comparativeBalance !== 0 
+            ? ((balance - comparativeBalance) / Math.abs(comparativeBalance)) * 100 
+            : 0
+        };
+      };
+      
+      // Get receivables from account_type = 2 (already calculated correctly in SQL as assets)
+      const accountsReceivable = allType2Accounts
+        .filter(a => isReceivable(a))
+        .map(formatAccountData);
+      
+      // Get cash/bank accounts from account_type = 2 (like ECO Bank, already calculated correctly in SQL as assets)
+      const cashBankAccountsFromType2 = allType2Accounts
+        .filter(a => isCashOrBankAccount(a) && !isReceivable(a))
+        .map(formatAccountData);
+      
+      // --- Liabilities are the remaining account_type = 2 accounts (not receivables, not cash/bank) ---
+      let liabilities = allType2Accounts
+        .filter(a => !isReceivable(a) && !isCashOrBankAccount(a))
+        .map(formatAccountData);
+      
       // --- Get debtors control accounts (we're NOT using stock accounts type 6) ---
       const debtorsControlAccounts = accountsResult.filter(a => a.account_type === 7);
 
@@ -394,11 +479,20 @@ const reportsController = {
         ...cashAndEquivalents.filter(
           ca => !assets.some(a => a.id === ca.id)
         ),
+        // Add cash/bank accounts from account_type = 2 (like ECO Bank)
+        ...cashBankAccountsFromType2.filter(
+          cb => !assets.some(a => a.id === cb.id) && !cashAndEquivalents.some(ca => ca.id === cb.id)
+        ),
         ...accountsReceivable.filter(
-          ar => !assets.some(a => a.id === ar.id) && !cashAndEquivalents.some(ca => ca.id === ar.id)
+          ar => !assets.some(a => a.id === ar.id) && 
+                !cashAndEquivalents.some(ca => ca.id === ar.id) && 
+                !cashBankAccountsFromType2.some(cb => cb.id === ar.id)
         ),
         ...debtorsControlAccounts.filter(
-          debtors => !assets.some(a => a.id === debtors.id) && !cashAndEquivalents.some(ca => ca.id === debtors.id) && !accountsReceivable.some(ar => ar.id === debtors.id)
+          debtors => !assets.some(a => a.id === debtors.id) && 
+                     !cashAndEquivalents.some(ca => ca.id === debtors.id) && 
+                     !cashBankAccountsFromType2.some(cb => cb.id === debtors.id) &&
+                     !accountsReceivable.some(ar => ar.id === debtors.id)
         ),
         // Add physical inventory value from store inventory (stock accounts type 6 are not used)
         // Only add if there are no existing inventory accounts to prevent double-counting

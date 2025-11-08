@@ -12,6 +12,11 @@ const clientController = {
       
       // If limit is very high (like 10000), return all clients without pagination
       const getAllClients = limit >= 10000;
+      // Lightweight mode for journey plan modal - only fetch minimal fields, no JOINs
+      const lightweight = req.query.lightweight === 'true' || req.query.lightweight === '1';
+      if (lightweight) {
+        console.log('[getAllClients] LIGHTWEIGHT MODE ENABLED - Using optimized query');
+      }
       const search = req.query.search ? String(req.query.search).trim() : '';
       const countryId = req.query.countryId ? String(req.query.countryId) : '';
       const regionId = req.query.regionId ? String(req.query.regionId) : '';
@@ -44,13 +49,20 @@ const clientController = {
       }
 
       // Build ORDER BY clause
-      let orderBy = 'ORDER BY c.created_at DESC'; // Default sorting
+      // For lightweight mode, use simpler sorting (by name for better search results)
+      let orderBy = lightweight 
+        ? 'ORDER BY c.name ASC'  // Simple sort for lightweight mode
+        : 'ORDER BY c.created_at DESC'; // Default sorting for full mode
+      
       if (sortField) {
         // Validate sortField to prevent SQL injection
-        const allowedSortFields = ['balance', 'name', 'created_at', 'contact', 'email'];
+        const allowedSortFields = lightweight 
+          ? ['name', 'email', 'contact']  // Limited fields for lightweight mode
+          : ['balance', 'name', 'created_at', 'contact', 'email'];
+        
         if (allowedSortFields.includes(sortField)) {
           const validSortOrder = (sortOrder === 'DESC') ? 'DESC' : 'ASC';
-          if (sortField === 'balance') {
+          if (sortField === 'balance' && !lightweight) {
             orderBy = `ORDER BY COALESCE(CAST(c.balance AS DECIMAL(15,2)), 0) ${validSortOrder}`;
           } else {
             orderBy = `ORDER BY c.${sortField} ${validSortOrder}`;
@@ -65,8 +77,29 @@ const clientController = {
 
       // Get data (with or without pagination)
       let clients;
-      if (getAllClients) {
-        // Return all clients without pagination
+      
+      // Lightweight mode - only fetch minimal fields needed for journey plan modal (no JOINs)
+      if (lightweight) {
+        const lightweightFields = `c.id, c.name, c.company_name, c.email, c.address, c.contact, c.latitude, c.longitude`;
+        if (getAllClients) {
+          [clients] = await db.query(
+            `SELECT ${lightweightFields}
+             FROM Clients c
+             ${where} ${orderBy}`,
+            params
+          );
+          console.log(`[getAllClients] lightweight mode: returning ALL ${clients.length} clients (no pagination)`);
+        } else {
+          [clients] = await db.query(
+            `SELECT ${lightweightFields}
+             FROM Clients c
+             ${where} ${orderBy} LIMIT ? OFFSET ?`,
+            [...params, limit, offset]
+          );
+          console.log(`[getAllClients] lightweight mode: returning ${clients.length} clients (page ${page})`);
+        }
+      } else if (getAllClients) {
+        // Return all clients without pagination (full query with JOINs)
         [clients] = await db.query(
           `SELECT c.*,
                   COALESCE(CAST(c.balance AS DECIMAL(15,2)), 0) AS balance,
@@ -94,7 +127,7 @@ const clientController = {
         );
         console.log(`[getAllClients] returning ALL ${clients.length} clients (no pagination)`);
       } else {
-        // Return paginated data
+        // Return paginated data (full query with JOINs)
         [clients] = await db.query(
           `SELECT c.*,
                   COALESCE(CAST(c.balance AS DECIMAL(15,2)), 0) AS balance,

@@ -715,6 +715,7 @@ const staffController = {
   getEmployeeWorkingHours: async (req, res) => {
     try {
       const { start_date, end_date, staff_id } = req.query;
+      console.log('Query params:', { start_date, end_date, staff_id });
       let params = [];
       let where = 'WHERE 1=1';
       if (start_date) {
@@ -725,18 +726,74 @@ const staffController = {
         where += ' AND a.date <= ?';
         params.push(end_date);
       }
-      if (staff_id) {
-        where += ' AND a.staff_id = ?';
-        params.push(staff_id);
+      
+      // Try to detect if table uses user_id or staff_id
+      // First try with user_id (new schema)
+      let query, attendance;
+      try {
+        if (staff_id) {
+          where += ' AND a.user_id = ?';
+          params.push(staff_id);
+        }
+        query = `
+          SELECT 
+            a.id, 
+            IFNULL(s.name, IFNULL(u.username, CONCAT('User ', a.user_id))) as name,
+            IFNULL(s.department, 'N/A') as department,
+            a.date, 
+            a.checkin_time, 
+            a.checkout_time, 
+            a.user_id as staff_id
+          FROM staff_attendance a
+          LEFT JOIN users u ON a.user_id = u.id
+          LEFT JOIN staff s ON a.user_id = s.id
+          ${where}
+          ORDER BY a.date DESC, a.id DESC
+        `;
+        console.log('SQL Query (with user_id):', query);
+        console.log('Query params:', params);
+        [attendance] = await db.query(query, params);
+        console.log('Attendance records found:', attendance.length);
+      } catch (queryError) {
+        // If user_id fails, try with staff_id (old schema)
+        console.log('Query with user_id failed, trying staff_id...');
+        console.error('Error:', queryError.message);
+        
+        // Reset params and where clause
+        params = [];
+        where = 'WHERE 1=1';
+        if (start_date) {
+          where += ' AND a.date >= ?';
+          params.push(start_date);
+        }
+        if (end_date) {
+          where += ' AND a.date <= ?';
+          params.push(end_date);
+        }
+        if (staff_id) {
+          where += ' AND a.staff_id = ?';
+          params.push(staff_id);
+        }
+        
+        query = `
+          SELECT 
+            a.id, 
+            IFNULL(s.name, 'Unknown') as name,
+            IFNULL(s.department, 'N/A') as department,
+            a.date, 
+            a.checkin_time, 
+            a.checkout_time, 
+            a.staff_id
+          FROM staff_attendance a
+          LEFT JOIN staff s ON a.staff_id = s.id
+          ${where}
+          ORDER BY a.date DESC, a.id DESC
+        `;
+        console.log('SQL Query (with staff_id):', query);
+        console.log('Query params:', params);
+        [attendance] = await db.query(query, params);
+        console.log('Attendance records found:', attendance.length);
       }
-      // Get attendance records joined with staff
-      const [attendance] = await db.query(`
-        SELECT a.id, s.name, s.department, a.date, a.checkin_time, a.checkout_time, a.staff_id
-        FROM attendance a
-        LEFT JOIN staff s ON a.staff_id = s.id
-        ${where}
-        ORDER BY a.date DESC, s.name
-      `, params);
       // Get all leaves in range
       let leaveParams = [];
       let leaveWhere = 'WHERE 1=1';
@@ -765,26 +822,57 @@ const staffController = {
       const results = attendance.map(a => {
         let status = 'Absent';
         let time_spent = '';
-        if (a.checkin_time) {
+        
+        // Parse VARCHAR date/time fields
+        // checkin_time and checkout_time are VARCHAR, so we need to parse them
+        if (a.checkin_time && a.checkin_time !== '' && a.checkin_time !== 'NULL') {
           status = 'Present';
-          const checkin = new Date(a.checkin_time);
-          const checkout = a.checkout_time ? new Date(a.checkout_time) : null;
-          const end = checkout || new Date();
-          const diffMs = end.getTime() - checkin.getTime();
-          const hours = Math.floor(diffMs / (1000 * 60 * 60));
-          const mins = Math.floor((diffMs / (1000 * 60)) % 60);
-          time_spent = `${hours}h ${mins}m`;
+          try {
+            // Try to parse the checkin_time (could be various formats)
+            const checkinStr = a.checkin_time.toString().trim();
+            const checkoutStr = a.checkout_time && a.checkout_time !== '' && a.checkout_time !== 'NULL' 
+              ? a.checkout_time.toString().trim() 
+              : null;
+            
+            const checkin = new Date(checkinStr);
+            const checkout = checkoutStr ? new Date(checkoutStr) : null;
+            
+            // If date parsing fails, try to handle it differently
+            if (isNaN(checkin.getTime())) {
+              // If it's just time, we can't calculate duration
+              time_spent = '-';
+            } else {
+              const end = checkout && !isNaN(checkout.getTime()) ? checkout : new Date();
+              const diffMs = end.getTime() - checkin.getTime();
+              if (diffMs > 0) {
+                const hours = Math.floor(diffMs / (1000 * 60 * 60));
+                const mins = Math.floor((diffMs / (1000 * 60)) % 60);
+                time_spent = `${hours}h ${mins}m`;
+              } else {
+                time_spent = '-';
+              }
+            }
+          } catch (e) {
+            console.error('Error parsing time:', e);
+            time_spent = '-';
+          }
         }
+        
         // Check if on leave for this day
+        // Note: leave_requests uses employee_id which might reference staff.id
+        // We need to check if user_id matches staff.id or if there's another mapping
         const empLeaves = leaveMap[a.staff_id] || [];
         const onLeave = empLeaves.some(lv => {
-          return lv.status === 'approved' && a.date >= lv.start && a.date <= lv.end;
+          // Compare dates as strings since date is VARCHAR
+          const recordDate = a.date.toString();
+          return lv.status === 'approved' && recordDate >= lv.start && recordDate <= lv.end;
         });
         if (onLeave) status = 'Leave';
+        
         return {
           id: a.id,
-          name: a.name,
-          department: a.department,
+          name: a.name || 'Unknown',
+          department: a.department || 'N/A',
           date: a.date,
           checkin_time: a.checkin_time,
           checkout_time: a.checkout_time,
@@ -792,6 +880,10 @@ const staffController = {
           status,
         };
       });
+      console.log('Results count:', results.length);
+      if (results.length > 0) {
+        console.log('Sample result:', results[0]);
+      }
       res.json(results);
     } catch (error) {
       console.error('Error fetching employee working hours:', error);

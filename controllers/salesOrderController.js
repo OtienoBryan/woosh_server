@@ -605,7 +605,7 @@ const salesOrderController = {
           await connection.query(`
             INSERT INTO sales_order_items (
               sales_order_id, product_id, quantity, unit_price, tax_amount, total_price, tax_type, net_price
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           `, [id, item.product_id, item.quantity, item.unit_price, itemTax, totalPrice, item.tax_type || '16%', net]);
         }
         }
@@ -1373,6 +1373,22 @@ const salesOrderController = {
         error: 'Failed to fetch category performance data',
         details: error.message
       });
+    }
+  },
+
+  // Get new orders count (optimized endpoint)
+  getNewOrdersCount: async (req, res) => {
+    try {
+      const [result] = await db.query(`
+        SELECT COUNT(*) as count
+        FROM sales_orders 
+        WHERE my_status = 0 OR my_status = '0'
+      `);
+      
+      res.json({ success: true, data: { count: result[0].count } });
+    } catch (error) {
+      console.error('Error fetching new orders count:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch new orders count' });
     }
   }
 };

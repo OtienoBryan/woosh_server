@@ -112,6 +112,7 @@ router.get('/sales-orders', authenticateToken, salesOrderController.getAllSalesO
 router.get('/sales-orders-all', authenticateToken, salesOrderController.getAllSalesOrdersIncludingDrafts);
 router.get('/sales-orders/current-month-data', authenticateToken, salesOrderController.getCurrentMonthSalesData);
 router.get('/sales-orders/category-performance', authenticateToken, salesOrderController.getCategoryPerformanceData);
+router.get('/sales-orders/new-count', authenticateToken, salesOrderController.getNewOrdersCount);
 router.post('/sales-orders', authenticateToken, (req, res, next) => {
   console.log('=== SALES ORDERS ROUTE HIT ===');
   console.log('Method:', req.method);
@@ -346,6 +347,7 @@ router.get('/sales-reps', authenticateToken, getSalesReps);
 
 // Credit Notes Routes (Protected with authentication)
 router.get('/credit-notes', authenticateToken, creditNoteController.getAllCreditNotes);
+router.get('/credit-notes/new-count', authenticateToken, creditNoteController.getNewCreditNotesCount);
 router.get('/credit-notes/:id', authenticateToken, creditNoteController.getCreditNoteById);
 router.post('/credit-notes', authenticateToken, creditNoteController.createCreditNote);
 router.post('/credit-notes/receive-back', authenticateToken, creditNoteController.receiveBackToStock);

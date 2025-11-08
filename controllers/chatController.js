@@ -19,10 +19,11 @@ const chatController = {
           db.query('INSERT INTO chat_room_members (room_id, staff_id) VALUES (?, ?)', [roomId, staff_id])
         )
       );
-      res.status(201).json({ roomId });
+      console.log(`✅ Chat room ${roomId} created by user ${created_by}`);
+      res.status(201).json({ success: true, roomId });
     } catch (error) {
-        console.error('Create Room Error:', error);
-      res.status(500).json({ message: 'Failed to create chat room', error: error.message });
+        console.error('❌ Create Room Error:', error);
+      res.status(500).json({ success: false, message: 'Failed to create chat room', error: error.message });
     }
   },
 
@@ -57,9 +58,14 @@ const chatController = {
         'INSERT INTO chat_messages (room_id, sender_id, message) VALUES (?, ?, ?)',
         [roomId, sender_id, message]
       );
-      res.status(201).json({ messageId: result.insertId });
+      res.status(201).json({ 
+        success: true,
+        messageId: result.insertId,
+        room_id: roomId
+      });
     } catch (error) {
-      res.status(500).json({ message: 'Failed to send message', error: error.message });
+      console.error('Send message error:', error);
+      res.status(500).json({ success: false, message: 'Failed to send message', error: error.message });
     }
   },
 
@@ -88,9 +94,14 @@ const chatController = {
       if (!msg) return res.status(404).json({ message: 'Message not found' });
       if (msg.sender_id !== userId) return res.status(403).json({ message: 'Not allowed' });
       await db.query('UPDATE chat_messages SET message = ? WHERE id = ?', [message, messageId]);
-      res.json({ message: 'Message updated' });
+      res.json({ 
+        success: true,
+        message: 'Message updated',
+        room_id: msg.room_id,
+        messageId: parseInt(messageId)
+      });
     } catch (error) {
-      res.status(500).json({ message: 'Failed to edit message', error: error.message });
+      res.status(500).json({ success: false, message: 'Failed to edit message', error: error.message });
     }
   },
 
@@ -104,9 +115,14 @@ const chatController = {
       if (!msg) return res.status(404).json({ message: 'Message not found' });
       if (msg.sender_id !== userId) return res.status(403).json({ message: 'Not allowed' });
       await db.query('DELETE FROM chat_messages WHERE id = ?', [messageId]);
-      res.json({ message: 'Message deleted' });
+      res.json({ 
+        success: true,
+        message: 'Message deleted',
+        room_id: msg.room_id,
+        messageId: parseInt(messageId)
+      });
     } catch (error) {
-      res.status(500).json({ message: 'Failed to delete message', error: error.message });
+      res.status(500).json({ success: false, message: 'Failed to delete message', error: error.message });
     }
   },
 

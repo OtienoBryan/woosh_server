@@ -1,26 +1,100 @@
 const db = require('../database/db');
 
 const receivablesController = {
-  // Get aging receivables for all customers
+  // Get aging receivables for all customers (OPTIMIZED with pagination and search)
   getAgingReceivables: async (req, res) => {
     try {
+      // Get query parameters
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 10;
+      const search = req.query.search || '';
+      const offset = (page - 1) * limit;
+
+      // Build search condition for WHERE clause
+      const searchWhere = search ? 'AND c.name LIKE ?' : '';
+      const searchParams = search ? [`%${search}%`] : [];
+
+      // First, get total count for pagination - count customers with receivables
+      const [countRows] = await db.query(`
+        SELECT COUNT(*) as total
+        FROM (
+          SELECT
+            c.id AS customer_id,
+            c.name AS client_name,
+            SUM(l.debit - l.credit) AS total_receivable
+          FROM Clients c
+          INNER JOIN client_ledger l ON c.id = l.client_id
+          WHERE (l.debit - l.credit) > 0
+          ${searchWhere}
+          GROUP BY c.id, c.name
+          HAVING total_receivable > 0
+        ) AS customers_with_receivables
+      `, searchParams);
+      
+      const total = countRows[0]?.total || 0;
+
+      // Get summary totals for all receivables (for summary cards) - separate optimized query
+      const [summaryRows] = await db.query(`
+        SELECT
+          COALESCE(SUM(CASE WHEN DATEDIFF(NOW(), l.date) <= 0 THEN l.debit - l.credit ELSE 0 END), 0) AS current,
+          COALESCE(SUM(CASE WHEN DATEDIFF(NOW(), l.date) BETWEEN 1 AND 30 THEN l.debit - l.credit ELSE 0 END), 0) AS days_1_30,
+          COALESCE(SUM(CASE WHEN DATEDIFF(NOW(), l.date) BETWEEN 31 AND 60 THEN l.debit - l.credit ELSE 0 END), 0) AS days_31_60,
+          COALESCE(SUM(CASE WHEN DATEDIFF(NOW(), l.date) BETWEEN 61 AND 90 THEN l.debit - l.credit ELSE 0 END), 0) AS days_61_90,
+          COALESCE(SUM(CASE WHEN DATEDIFF(NOW(), l.date) > 90 THEN l.debit - l.credit ELSE 0 END), 0) AS days_90_plus,
+          COALESCE(SUM(l.debit - l.credit), 0) AS total_receivable
+        FROM Clients c
+        INNER JOIN client_ledger l ON c.id = l.client_id
+        WHERE (l.debit - l.credit) > 0
+        ${searchWhere}
+      `, searchParams);
+
+      // Main paginated query - calculate aging per customer with pagination
+      // Using subquery to pre-filter and then calculate aging buckets
       const [rows] = await db.query(`
         SELECT
-          c.id AS customer_id,
-          c.name AS client_name,
-          SUM(CASE WHEN DATEDIFF(NOW(), l.date) <= 0 THEN l.debit - l.credit ELSE 0 END) AS current,
-          SUM(CASE WHEN DATEDIFF(NOW(), l.date) BETWEEN 1 AND 30 THEN l.debit - l.credit ELSE 0 END) AS days_1_30,
-          SUM(CASE WHEN DATEDIFF(NOW(), l.date) BETWEEN 31 AND 60 THEN l.debit - l.credit ELSE 0 END) AS days_31_60,
-          SUM(CASE WHEN DATEDIFF(NOW(), l.date) BETWEEN 61 AND 90 THEN l.debit - l.credit ELSE 0 END) AS days_61_90,
-          SUM(CASE WHEN DATEDIFF(NOW(), l.date) > 90 THEN l.debit - l.credit ELSE 0 END) AS days_90_plus,
-          SUM(l.debit - l.credit) AS total_receivable
-                 FROM Clients c
-         LEFT JOIN client_ledger l ON c.id = l.client_id
-        GROUP BY c.id, c.name
+          customer_id,
+          client_name,
+          COALESCE(SUM(CASE WHEN DATEDIFF(NOW(), ledger_date) <= 0 THEN amount ELSE 0 END), 0) AS current,
+          COALESCE(SUM(CASE WHEN DATEDIFF(NOW(), ledger_date) BETWEEN 1 AND 30 THEN amount ELSE 0 END), 0) AS days_1_30,
+          COALESCE(SUM(CASE WHEN DATEDIFF(NOW(), ledger_date) BETWEEN 31 AND 60 THEN amount ELSE 0 END), 0) AS days_31_60,
+          COALESCE(SUM(CASE WHEN DATEDIFF(NOW(), ledger_date) BETWEEN 61 AND 90 THEN amount ELSE 0 END), 0) AS days_61_90,
+          COALESCE(SUM(CASE WHEN DATEDIFF(NOW(), ledger_date) > 90 THEN amount ELSE 0 END), 0) AS days_90_plus,
+          COALESCE(SUM(amount), 0) AS total_receivable
+        FROM (
+          SELECT
+            c.id AS customer_id,
+            c.name AS client_name,
+            l.date AS ledger_date,
+            (l.debit - l.credit) AS amount
+          FROM Clients c
+          INNER JOIN client_ledger l ON c.id = l.client_id
+          WHERE (l.debit - l.credit) > 0
+          ${searchWhere}
+        ) AS ledger_data
+        GROUP BY customer_id, client_name
         HAVING total_receivable > 0
-        ORDER BY c.name
-      `);
-      res.json({ success: true, data: rows });
+        ORDER BY client_name
+        LIMIT ? OFFSET ?
+      `, [...searchParams, limit, offset]);
+
+      res.json({ 
+        success: true, 
+        data: rows,
+        summary: summaryRows[0] || {
+          current: 0,
+          days_1_30: 0,
+          days_31_60: 0,
+          days_61_90: 0,
+          days_90_plus: 0,
+          total_receivable: 0
+        },
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit)
+        }
+      });
     } catch (error) {
       console.error('Error fetching aging receivables:', error);
       res.status(500).json({ success: false, error: 'Failed to fetch aging receivables' });

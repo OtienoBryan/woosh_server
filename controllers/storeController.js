@@ -4,20 +4,41 @@ const storeController = {
   // Get all stores
   getAllStores: async (req, res) => {
     try {
+      console.log('Getting all stores...');
       const [stores] = await connection.query(`
         SELECT * FROM stores 
         ORDER BY store_name ASC
       `);
 
+      // Filter active stores in JavaScript to avoid SQL issues
+      const activeStores = stores.filter(store => 
+        store.is_active === 1 || store.is_active === null || store.is_active === undefined
+      );
+
+      console.log(`Found ${stores.length} stores, ${activeStores.length} active`);
+
       res.json({
         success: true,
-        data: stores
+        data: activeStores || []
       });
     } catch (error) {
       console.error('Error fetching stores:', error);
+      console.error('Error stack:', error.stack);
+      console.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        sqlMessage: error.sqlMessage,
+        sqlState: error.sqlState,
+        errno: error.errno
+      });
       res.status(500).json({
         success: false,
-        error: 'Failed to fetch stores'
+        error: error.message || 'Failed to fetch stores',
+        details: process.env.NODE_ENV === 'development' ? {
+          code: error.code,
+          sqlMessage: error.sqlMessage,
+          errno: error.errno
+        } : undefined
       });
     }
   },
@@ -235,25 +256,38 @@ const storeController = {
           si.store_id as store_id,
           s.store_name,
           s.store_code,
+          p.id as product_id,
           p.product_name,
           p.product_code,
           p.category,
-          si.quantity,
+          COALESCE(si.quantity, 0) as quantity,
           p.unit_of_measure,
           p.cost_price,
           p.selling_price,
           (COALESCE(si.quantity, 0) * COALESCE(p.cost_price, 0)) as inventory_value
-        FROM store_inventory si
-        LEFT JOIN stores s ON si.store_id = s.id
-        LEFT JOIN products p ON si.product_id = p.id
-        WHERE s.is_active = true AND p.is_active = true
-        ORDER BY s.store_name, p.product_name
+        FROM products p
+        CROSS JOIN stores s
+        LEFT JOIN store_inventory si ON si.product_id = p.id AND si.store_id = s.id
+        WHERE s.is_active = 1 AND (p.is_active = 1 OR p.is_active IS NULL)
+        ORDER BY p.product_name, s.store_name
       `);
       
       res.json({ success: true, data: rows });
     } catch (error) {
       console.error('Error fetching all stores inventory:', error);
-      res.status(500).json({ success: false, error: 'Failed to fetch stores inventory' });
+      console.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        sqlMessage: error.sqlMessage
+      });
+      res.status(500).json({ 
+        success: false, 
+        error: error.message || 'Failed to fetch stores inventory',
+        details: process.env.NODE_ENV === 'development' ? {
+          code: error.code,
+          sqlMessage: error.sqlMessage
+        } : undefined
+      });
     }
   },
 

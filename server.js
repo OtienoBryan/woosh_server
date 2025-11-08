@@ -1420,37 +1420,131 @@ const io = new Server(server, {
   }
 });
 
-// Socket.IO chat logic
+// Socket.IO chat logic with enhanced logging and error handling
 io.on('connection', (socket) => {
+  console.log('✅ New socket connection:', socket.id);
+
   // Join a chat room
   socket.on('joinRoom', (roomId) => {
     socket.join(`room_${roomId}`);
+    console.log(`📥 Socket ${socket.id} joined room_${roomId}`);
+    socket.emit('roomJoined', { roomId, success: true });
   });
 
   // Leave a chat room
   socket.on('leaveRoom', (roomId) => {
     socket.leave(`room_${roomId}`);
+    console.log(`📤 Socket ${socket.id} left room_${roomId}`);
   });
 
-  // Handle sending a message
+  // Handle sending a message - optimized for instant delivery
   socket.on('sendMessage', async (data) => {
     // data: { roomId, message, sender_id, sender_name, sentAt }
     try {
+      console.log(`💬 Message received from socket ${socket.id} for room ${data.roomId}`);
+      
       // Save to database
       const [result] = await db.query(
         'INSERT INTO chat_messages (room_id, sender_id, message) VALUES (?, ?, ?)',
         [data.roomId, data.sender_id, data.message]
       );
+      
       // Fetch the saved message with sender_name and sent_at
       const [rows] = await db.query(
         `SELECT m.*, s.name as sender_name FROM chat_messages m JOIN staff s ON m.sender_id = s.id WHERE m.id = ?`,
         [result.insertId]
       );
-      const savedMsg = rows[0];
-      io.to(`room_${data.roomId}`).emit('newMessage', savedMsg);
+      
+      if (rows && rows.length > 0) {
+        const savedMsg = rows[0];
+        console.log(`✉️  Broadcasting message ${savedMsg.id} to room_${data.roomId}`);
+        
+        // Broadcast to all clients in the room (including sender for confirmation)
+        io.to(`room_${data.roomId}`).emit('newMessage', savedMsg);
+        
+        // Send confirmation to sender
+        socket.emit('messageSent', { messageId: savedMsg.id, success: true });
+      } else {
+        console.error('❌ Failed to fetch saved message');
+        socket.emit('messageError', { error: 'Failed to fetch saved message' });
+      }
     } catch (err) {
-      console.error('Socket sendMessage error:', err);
+      console.error('❌ Socket sendMessage error:', err);
+      socket.emit('messageError', { error: err.message });
     }
+  });
+
+  // Handle editing a message
+  socket.on('editMessage', async (data) => {
+    try {
+      const { messageId, message, userId } = data;
+      
+      // Verify ownership
+      const [[msg]] = await db.query('SELECT * FROM chat_messages WHERE id = ?', [messageId]);
+      if (!msg) {
+        socket.emit('editError', { error: 'Message not found' });
+        return;
+      }
+      if (msg.sender_id !== userId) {
+        socket.emit('editError', { error: 'Not authorized' });
+        return;
+      }
+      
+      // Update message
+      await db.query('UPDATE chat_messages SET message = ? WHERE id = ?', [message, messageId]);
+      
+      // Broadcast update to room
+      io.to(`room_${msg.room_id}`).emit('messageEdited', {
+        messageId,
+        message,
+        room_id: msg.room_id
+      });
+      
+      console.log(`✏️  Message ${messageId} edited in room_${msg.room_id}`);
+    } catch (err) {
+      console.error('❌ Socket editMessage error:', err);
+      socket.emit('editError', { error: err.message });
+    }
+  });
+
+  // Handle deleting a message
+  socket.on('deleteMessage', async (data) => {
+    try {
+      const { messageId, userId } = data;
+      
+      // Verify ownership
+      const [[msg]] = await db.query('SELECT * FROM chat_messages WHERE id = ?', [messageId]);
+      if (!msg) {
+        socket.emit('deleteError', { error: 'Message not found' });
+        return;
+      }
+      if (msg.sender_id !== userId) {
+        socket.emit('deleteError', { error: 'Not authorized' });
+        return;
+      }
+      
+      // Delete message
+      await db.query('DELETE FROM chat_messages WHERE id = ?', [messageId]);
+      
+      // Broadcast deletion to room
+      io.to(`room_${msg.room_id}`).emit('messageDeleted', {
+        messageId,
+        room_id: msg.room_id
+      });
+      
+      console.log(`🗑️  Message ${messageId} deleted from room_${msg.room_id}`);
+    } catch (err) {
+      console.error('❌ Socket deleteMessage error:', err);
+      socket.emit('deleteError', { error: err.message });
+    }
+  });
+
+  socket.on('disconnect', () => {
+    console.log('🔌 Socket disconnected:', socket.id);
+  });
+
+  socket.on('error', (error) => {
+    console.error('⚠️  Socket error:', error);
   });
 });
 

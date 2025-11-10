@@ -16,6 +16,8 @@ router.delete('/rooms/:roomId/members', chatController.removeMember);
 router.post('/rooms/:roomId/messages', chatController.sendMessage);
 // Get messages for a room
 router.get('/rooms/:roomId/messages', chatController.getMessages);
+// Get members of a room
+router.get('/rooms/:roomId/members', chatController.getRoomMembers);
 // List chat rooms for the authenticated user
 router.get('/my-rooms', chatController.getRoomsForUser);
 // Get latest message timestamp for authenticated user

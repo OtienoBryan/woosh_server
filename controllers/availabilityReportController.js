@@ -8,11 +8,14 @@ exports.getAllAvailabilityReports = async (req, res) => {
     const offset = isViewAll ? 0 : (parseInt(page) - 1) * parseInt(limit);
     
     // Optimized query with indexed columns first and category information
+    // Primary match: Use productId to get the exact product and its category
+    // This ensures each ProductReport gets the category from its specific productId
     let sql = `
       SELECT ar.id, ar.reportId, ar.comment, ar.createdAt, ar.clientId, ar.userId, ar.productId,
              c.name AS clientName, co.name AS countryName, u.name AS salesRepName,
              ar.ProductName AS productName, ar.quantity,
-             cat.id AS categoryId, cat.name AS categoryName, 
+             cat.id AS categoryId, 
+             cat.name AS categoryName, 
              COALESCE(cat.orderIndex, 999) AS categoryOrder
       FROM ProductReport ar
       LEFT JOIN Clients c ON ar.clientId = c.id
@@ -115,11 +118,13 @@ exports.exportAvailabilityReportsCSV = async (req, res) => {
     console.log('Availability reports CSV export route hit!');
     const { startDate, endDate, currentDate, country, salesRep, search } = req.query;
     // Fetch ALL matching rows (no pagination) with category info - same base as UI
+    // Primary match: Use productId to get the exact product and its category
     let sql = `
       SELECT ar.id, ar.reportId, ar.comment, ar.createdAt, ar.clientId, ar.userId, ar.productId,
              c.name AS clientName, co.name AS countryName, u.name AS salesRepName,
              ar.ProductName AS productName, ar.quantity,
-             cat.id AS categoryId, cat.name AS categoryName,
+             cat.id AS categoryId, 
+             cat.name AS categoryName,
              COALESCE(cat.orderIndex, 999) AS categoryOrder
       FROM ProductReport ar
       LEFT JOIN Clients c ON ar.clientId = c.id

@@ -158,6 +158,38 @@ const chatController = {
     } catch (error) {
       res.status(500).json({ success: false, message: 'Failed to fetch latest chat info', error: error.message });
     }
+  },
+
+  // Get members of a chat room
+  getRoomMembers: async (req, res) => {
+    const { roomId } = req.params;
+    const userId = req.user.userId;
+    try {
+      // First verify that the user is a member of this room
+      const [[memberCheck]] = await db.query(
+        'SELECT * FROM chat_room_members WHERE room_id = ? AND staff_id = ?',
+        [roomId, userId]
+      );
+      
+      if (!memberCheck) {
+        return res.status(403).json({ success: false, message: 'You are not a member of this room' });
+      }
+
+      // Get all members of the room with their staff information
+      const [members] = await db.query(
+        `SELECT s.id, s.name, s.business_email as email, s.phone_number as phone, m.staff_id
+         FROM chat_room_members m
+         JOIN staff s ON m.staff_id = s.id
+         WHERE m.room_id = ?
+         ORDER BY s.name ASC`,
+        [roomId]
+      );
+      
+      res.json({ success: true, members });
+    } catch (error) {
+      console.error('Get room members error:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch room members', error: error.message });
+    }
   }
 };
 

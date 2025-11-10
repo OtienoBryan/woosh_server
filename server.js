@@ -1551,6 +1551,27 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  
+  // Setup daily sales rep checkout at 11:00 PM
+  try {
+    const cron = require('node-cron');
+    const checkoutSalesReps = require('./checkout-sales-reps-daily');
+    
+    // Schedule daily checkout at 11:00 PM (23:00) - cron format: minute hour day month dayOfWeek
+    // This runs every day at 11:00 PM
+    cron.schedule('0 23 * * *', async () => {
+      console.log('\n⏰ Scheduled sales rep checkout triggered at 11:00 PM');
+      await checkoutSalesReps();
+    }, {
+      scheduled: true,
+      timezone: 'UTC' // Use UTC timezone to match server timezone setting
+    });
+    
+    console.log('✅ Daily sales rep checkout scheduled for 11:00 PM (UTC)');
+  } catch (error) {
+    console.error('⚠️  Failed to setup scheduled sales rep checkout:', error.message);
+    console.error('   The checkout script can still be run manually: node server/checkout-sales-reps-daily.js');
+  }
 });
 
 module.exports = app; 

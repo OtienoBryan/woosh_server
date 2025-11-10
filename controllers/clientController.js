@@ -80,7 +80,7 @@ const clientController = {
       
       // Lightweight mode - only fetch minimal fields needed for journey plan modal (no JOINs)
       if (lightweight) {
-        const lightweightFields = `c.id, c.name, c.company_name, c.email, c.address, c.contact, c.latitude, c.longitude`;
+        const lightweightFields = `c.id, c.name, c.email, c.address, c.contact, c.latitude, c.longitude`;
         if (getAllClients) {
           [clients] = await db.query(
             `SELECT ${lightweightFields}

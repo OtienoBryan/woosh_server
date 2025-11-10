@@ -234,7 +234,8 @@ const storeController = {
           p.category,
           p.unit_of_measure,
           p.cost_price,
-          p.selling_price
+          p.selling_price,
+          p.reorder_level
         FROM store_inventory si
         LEFT JOIN products p ON si.product_id = p.id
         WHERE si.store_id = ? AND p.is_active = true
@@ -248,9 +249,12 @@ const storeController = {
     }
   },
 
-  // Get all stores inventory summary
+  // Get all stores inventory summary (OPTIMIZED with indexes)
   getAllStoresInventory: async (req, res) => {
     try {
+      // Note: CROSS JOIN is necessary to show all products for all stores
+      // Performance is optimized through database indexes (see optimize_inventory_indexes.sql)
+      // For very large datasets, consider pagination or filtering
       const [rows] = await connection.query(`
         SELECT 
           si.store_id as store_id,
@@ -264,6 +268,7 @@ const storeController = {
           p.unit_of_measure,
           p.cost_price,
           p.selling_price,
+          p.reorder_level,
           (COALESCE(si.quantity, 0) * COALESCE(p.cost_price, 0)) as inventory_value
         FROM products p
         CROSS JOIN stores s
@@ -320,59 +325,62 @@ const storeController = {
     }
   },
 
-  // Get stock summary for all products across all stores
+  // Get stock summary for all products across all stores (OPTIMIZED - single query)
   getStockSummary: async (req, res) => {
     try {
-      // First, get all active stores and products
-      const [stores] = await connection.query(`
-        SELECT id, store_name, store_code 
-        FROM stores 
-        WHERE is_active = true 
-        ORDER BY store_name
+      // Optimized: Single query with JOINs instead of multiple queries and JavaScript processing
+      // Also fixed SQL injection vulnerability by using parameterized queries
+      const [results] = await connection.query(`
+        SELECT 
+          s.id as store_id,
+          s.store_name,
+          s.store_code,
+          p.id as product_id,
+          p.product_name,
+          p.product_code,
+          p.category,
+          p.reorder_level,
+          COALESCE(si.quantity, 0) as quantity
+        FROM stores s
+        CROSS JOIN products p
+        LEFT JOIN store_inventory si ON si.store_id = s.id AND si.product_id = p.id
+        WHERE s.is_active = 1 AND (p.is_active = 1 OR p.is_active IS NULL)
+        ORDER BY p.product_name, s.store_name
       `);
       
-      const [products] = await connection.query(`
-        SELECT id, product_name, product_code, category 
-        FROM products 
-        WHERE is_active = true 
-        ORDER BY product_name
-      `);
+      // Group results by store and product
+      const storesMap = new Map();
+      const productsMap = new Map();
       
-      // Get all inventory data
-      const [inventory] = await connection.query(`
-        SELECT store_id, product_id, quantity 
-        FROM store_inventory 
-        WHERE store_id IN (${stores.map(s => s.id).join(',')}) 
-        AND product_id IN (${products.map(p => p.id).join(',')})
-      `);
-      
-      // Create a map for quick lookup
-      const inventoryMap = new Map();
-      inventory.forEach(item => {
-        const key = `${item.store_id}-${item.product_id}`;
-        inventoryMap.set(key, item.quantity);
+      results.forEach(row => {
+        // Build stores array
+        if (!storesMap.has(row.store_id)) {
+          storesMap.set(row.store_id, {
+            id: row.store_id,
+            store_name: row.store_name,
+            store_code: row.store_code
+          });
+        }
+        
+        // Build products map with store quantities
+        if (!productsMap.has(row.product_id)) {
+          productsMap.set(row.product_id, {
+            id: row.product_id,
+            product_name: row.product_name,
+            product_code: row.product_code,
+            category: row.category,
+            reorder_level: row.reorder_level || 0,
+            store_quantities: {}
+          });
+        }
+        
+        const product = productsMap.get(row.product_id);
+        product.store_quantities[row.store_id] = row.quantity;
       });
       
-      // Build the response data
       const stockSummary = {
-        stores: stores,
-        products: products.map(product => {
-          const productData = {
-            id: product.id,
-            product_name: product.product_name,
-            product_code: product.product_code,
-            category: product.category,
-            store_quantities: {}
-          };
-          
-          // Add quantities for each store
-          stores.forEach(store => {
-            const key = `${store.id}-${product.id}`;
-            productData.store_quantities[store.id] = inventoryMap.get(key) || 0;
-          });
-          
-          return productData;
-        })
+        stores: Array.from(storesMap.values()),
+        products: Array.from(productsMap.values())
       };
       
       res.json({ success: true, data: stockSummary });

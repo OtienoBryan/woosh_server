@@ -121,7 +121,6 @@ const journeyPlanController = {
       const [plans] = await db.query(`
         SELECT jp.*, 
                c.name as client_name,
-               c.name as client_company_name,
                c.address as client_address,
                r.name as route_name
         FROM JourneyPlan jp
@@ -146,7 +145,6 @@ const journeyPlanController = {
         SELECT jp.*, 
                s.name as user_name,
                c.name as client_name,
-               c.name as client_company_name,
                c.address as client_address,
                c.email as client_email,
                c.contact as client_contact,
@@ -205,8 +203,7 @@ const journeyPlanController = {
       const [newPlan] = await db.query(`
         SELECT jp.*, 
                u.name as user_name,
-               c.name as client_name,
-               c.company_name as client_company_name
+               c.name as client_name
         FROM JourneyPlan jp
         LEFT JOIN users u ON jp.userId = u.id
         LEFT JOIN Clients c ON jp.clientId = c.id
@@ -278,8 +275,7 @@ const journeyPlanController = {
       const [updatedPlan] = await db.query(`
         SELECT jp.*, 
                u.name as user_name,
-               c.name as client_name,
-               c.company_name as client_company_name
+               c.name as client_name
         FROM JourneyPlan jp
         LEFT JOIN users u ON jp.userId = u.id
         LEFT JOIN Clients c ON jp.clientId = c.id

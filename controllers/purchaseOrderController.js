@@ -406,6 +406,13 @@ const purchaseOrderController = {
         
         const total_cost = received_quantity * taxExclusiveUnitCost;
 
+        // Update product cost_price in the products table with the new cost
+        await connection.query(`
+          UPDATE products 
+          SET cost_price = ? 
+          WHERE id = ?
+        `, [taxExclusiveUnitCost, product_id]);
+
         // Record the receipt (use tax-exclusive unit cost)
         await connection.query(`
           INSERT INTO inventory_receipts (

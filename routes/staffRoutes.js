@@ -93,5 +93,13 @@ router.get('/employee-working-hours', staffController.getEmployeeWorkingHours);
 router.get('/employee-working-days', staffController.getEmployeeWorkingDays);
 // GET /api/out-of-office-requests
 router.get('/out-of-office-requests', staffController.getOutOfOfficeRequests);
+// POST /api/out-of-office-requests
+router.post('/out-of-office-requests', staffController.createOutOfOfficeRequest);
+// PATCH /api/out-of-office-requests/:id (update status)
+router.patch('/out-of-office-requests/:id', staffController.updateOutOfOfficeRequestStatus);
+// PUT /api/out-of-office-requests/:id (update full request)
+router.put('/out-of-office-requests/:id', staffController.updateOutOfOfficeRequest);
+// DELETE /api/out-of-office-requests/:id
+router.delete('/out-of-office-requests/:id', staffController.deleteOutOfOfficeRequest);
 
 module.exports = router; 

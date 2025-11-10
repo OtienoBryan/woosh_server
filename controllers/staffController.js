@@ -1012,6 +1012,155 @@ const staffController = {
     }
   },
 
+  createOutOfOfficeRequest: async (req, res) => {
+    try {
+      const { staff_id, date, reason, comment, status } = req.body;
+      
+      if (!staff_id || !date || !reason) {
+        return res.status(400).json({ message: 'staff_id, date, and reason are required' });
+      }
+
+      const [result] = await db.query(`
+        INSERT INTO out_of_office_requests (staff_id, date, reason, comment, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, NOW(), NOW())
+      `, [staff_id, date, reason, comment || '', status || 'pending']);
+
+      const [newRequest] = await db.query(`
+        SELECT o.id, o.staff_id, s.name AS staff_name, s.role AS staff_role, s.photo_url, o.date, o.reason, o.comment, o.status, o.created_at, o.updated_at, o.approved_by, o.approved_at
+        FROM out_of_office_requests o
+        LEFT JOIN staff s ON o.staff_id = s.id
+        WHERE o.id = ?
+      `, [result.insertId]);
+
+      res.status(201).json(newRequest[0]);
+    } catch (error) {
+      console.error('Error creating out of office request:', error);
+      res.status(500).json({ message: 'Failed to create out of office request', error: error.message });
+    }
+  },
+
+  updateOutOfOfficeRequest: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { date, reason, comment, status } = req.body;
+
+      if (!date || !reason) {
+        return res.status(400).json({ message: 'date and reason are required' });
+      }
+
+      const updateFields = [];
+      const updateValues = [];
+
+      if (date) {
+        updateFields.push('date = ?');
+        updateValues.push(date);
+      }
+      if (reason) {
+        updateFields.push('reason = ?');
+        updateValues.push(reason);
+      }
+      if (comment !== undefined) {
+        updateFields.push('comment = ?');
+        updateValues.push(comment);
+      }
+      if (status) {
+        updateFields.push('status = ?');
+        updateValues.push(status);
+      }
+
+      updateFields.push('updated_at = NOW()');
+      updateValues.push(id);
+
+      await db.query(`
+        UPDATE out_of_office_requests
+        SET ${updateFields.join(', ')}
+        WHERE id = ?
+      `, updateValues);
+
+      const [updatedRequest] = await db.query(`
+        SELECT o.id, o.staff_id, s.name AS staff_name, s.role AS staff_role, s.photo_url, o.date, o.reason, o.comment, o.status, o.created_at, o.updated_at, o.approved_by, o.approved_at
+        FROM out_of_office_requests o
+        LEFT JOIN staff s ON o.staff_id = s.id
+        WHERE o.id = ?
+      `, [id]);
+
+      if (updatedRequest.length === 0) {
+        return res.status(404).json({ message: 'Out of office request not found' });
+      }
+
+      res.json(updatedRequest[0]);
+    } catch (error) {
+      console.error('Error updating out of office request:', error);
+      res.status(500).json({ message: 'Failed to update out of office request', error: error.message });
+    }
+  },
+
+  updateOutOfOfficeRequestStatus: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status, approved_by, approved_at } = req.body;
+
+      if (!status) {
+        return res.status(400).json({ message: 'status is required' });
+      }
+
+      const updateFields = ['status = ?', 'updated_at = NOW()'];
+      const updateValues = [status];
+
+      if (approved_by) {
+        updateFields.push('approved_by = ?');
+        updateValues.push(approved_by);
+      }
+      if (approved_at) {
+        updateFields.push('approved_at = ?');
+        updateValues.push(approved_at);
+      } else if (status !== 'pending') {
+        updateFields.push('approved_at = NOW()');
+      }
+
+      updateValues.push(id);
+
+      await db.query(`
+        UPDATE out_of_office_requests
+        SET ${updateFields.join(', ')}
+        WHERE id = ?
+      `, updateValues);
+
+      const [updatedRequest] = await db.query(`
+        SELECT o.id, o.staff_id, s.name AS staff_name, s.role AS staff_role, s.photo_url, o.date, o.reason, o.comment, o.status, o.created_at, o.updated_at, o.approved_by, o.approved_at
+        FROM out_of_office_requests o
+        LEFT JOIN staff s ON o.staff_id = s.id
+        WHERE o.id = ?
+      `, [id]);
+
+      if (updatedRequest.length === 0) {
+        return res.status(404).json({ message: 'Out of office request not found' });
+      }
+
+      res.json(updatedRequest[0]);
+    } catch (error) {
+      console.error('Error updating out of office request status:', error);
+      res.status(500).json({ message: 'Failed to update out of office request status', error: error.message });
+    }
+  },
+
+  deleteOutOfOfficeRequest: async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      const [result] = await db.query('DELETE FROM out_of_office_requests WHERE id = ?', [id]);
+
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ message: 'Out of office request not found' });
+      }
+
+      res.json({ message: 'Out of office request deleted successfully' });
+    } catch (error) {
+      console.error('Error deleting out of office request:', error);
+      res.status(500).json({ message: 'Failed to delete out of office request', error: error.message });
+    }
+  },
+
   getAllDepartments: async (req, res) => {
     try {
       const [departments] = await db.query('SELECT * FROM my_departments WHERE is_active = TRUE ORDER BY name');

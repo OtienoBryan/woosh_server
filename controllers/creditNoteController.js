@@ -54,11 +54,13 @@ const creditNoteController = {
           c.contact,
           c.address,
           s.name as staff_name,
-          creator.name as creator_name
+          creator.name as creator_name,
+          store.store_name as damage_store_name
         FROM credit_notes cn
         LEFT JOIN Clients c ON cn.client_id = c.id
         LEFT JOIN staff s ON cn.received_by = s.id
         LEFT JOIN staff creator ON cn.created_by = creator.id
+        LEFT JOIN stores store ON cn.damage_store_id = store.id
         ORDER BY cn.created_at DESC
       `);
       res.json({ success: true, data: rows });
@@ -80,11 +82,13 @@ const creditNoteController = {
           c.contact,
           c.address,
           s.name as staff_name,
-          creator.name as creator_name
+          creator.name as creator_name,
+          store.store_name as damage_store_name
         FROM credit_notes cn
         LEFT JOIN Clients c ON cn.client_id = c.id
         LEFT JOIN staff s ON cn.received_by = s.id
         LEFT JOIN staff creator ON cn.created_by = creator.id
+        LEFT JOIN stores store ON cn.damage_store_id = store.id
         WHERE cn.id = ?
       `, [id]);
       
@@ -164,8 +168,22 @@ const creditNoteController = {
         credit_note_date, 
         reason, 
         original_invoice_id,
-        items 
+        original_invoice_ids, // Support multiple invoices
+        items,
+        scenario_type = 'faulty_no_stock', // 'faulty_no_stock' or 'faulty_with_stock'
+        damage_store_id = null // Required for scenario 2
       } = req.body;
+
+      // Handle both original_invoice_id and original_invoice_ids
+      const primaryInvoiceId = original_invoice_id || (original_invoice_ids && original_invoice_ids.length > 0 ? original_invoice_ids[0] : null);
+
+      // Validate scenario 2 requires store
+      if (scenario_type === 'faulty_with_stock' && !damage_store_id) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Store selection is required for expired/damaged/faulty products from stock scenario' 
+        });
+      }
 
       // Generate credit note number
       const creditNoteNumber = `CN-${customer_id}-${Date.now()}`;
@@ -194,18 +212,22 @@ const creditNoteController = {
           credit_note_date, 
           original_invoice_id,
           reason, 
+          scenario_type,
+          damage_store_id,
           subtotal, 
           tax_amount, 
           total_amount, 
           status,
           created_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
         [
           creditNoteNumber,
           customer_id,
           credit_note_date,
-          original_invoice_id,
+          primaryInvoiceId,
           reason || '',
+          scenario_type,
+          damage_store_id,
           subtotal,
           tax_amount,
           total_amount,
@@ -233,7 +255,7 @@ const creditNoteController = {
            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
            [
              creditNoteId,
-             original_invoice_id || item.invoice_id,
+             item.invoice_id || primaryInvoiceId,
              item.product_id,
              item.quantity,
              item.unit_price,
@@ -286,10 +308,7 @@ const creditNoteController = {
         console.warn('Failed to update Clients table balance:', balanceError.message);
       }
 
-      // Create journal entries for credit note
-      const [salesRevenueAccount] = await connection.query(
-        `SELECT id FROM chart_of_accounts WHERE account_code = '400001' LIMIT 1`
-      );
+      // Create journal entries for credit note based on scenario
       const [accountsReceivableAccount] = await connection.query(
         `SELECT id FROM chart_of_accounts WHERE account_type = 2 LIMIT 1`
       );
@@ -297,8 +316,38 @@ const creditNoteController = {
         `SELECT id FROM chart_of_accounts WHERE account_code = '210006' LIMIT 1`
       );
 
-      if (salesRevenueAccount.length && accountsReceivableAccount.length) {
-        // Journal Entry: Reverse the original invoice
+      if (!accountsReceivableAccount.length) {
+        throw new Error('Accounts Receivable account not found');
+      }
+
+      if (scenario_type === 'faulty_no_stock') {
+        // Scenario 1: Faulty products (no stock return)
+        // Dr. Damages/faulty account (P&L), Dr. Sales VAT, Cr. Debtors account
+        
+        // Find or create damages/faulty account (P&L expense account)
+        let [damagesAccount] = await connection.query(
+          `SELECT id FROM chart_of_accounts 
+           WHERE (account_name LIKE '%damage%' OR account_name LIKE '%faulty%' OR account_name LIKE '%defect%')
+           AND account_type IN (5, 16, 18) 
+           LIMIT 1`
+        );
+        
+        // If not found, try to find any expense account with account_type 16 or 18
+        if (!damagesAccount.length) {
+          [damagesAccount] = await connection.query(
+            `SELECT id FROM chart_of_accounts 
+             WHERE account_type IN (16, 18) 
+             AND is_active = 1 
+             ORDER BY account_code 
+             LIMIT 1`
+          );
+        }
+        
+        if (!damagesAccount.length) {
+          throw new Error('Damages/Faulty account not found. Please create an expense account for damages.');
+        }
+
+        // Create journal entry
         const [journalResult] = await connection.query(
           `INSERT INTO journal_entries (
             entry_number, 
@@ -314,7 +363,7 @@ const creditNoteController = {
             `JE-CN-${creditNoteId}-${Date.now()}`,
             credit_note_date,
             creditNoteNumber,
-            `Credit note ${creditNoteNumber}`,
+            `Credit note ${creditNoteNumber} - Faulty products (no stock)`,
             total_amount,
             total_amount,
             1
@@ -334,7 +383,7 @@ const creditNoteController = {
           [journalEntryId, accountsReceivableAccount[0].id, total_amount, `Credit note ${creditNoteNumber}`]
         );
 
-        // Debit Sales Revenue (net)
+        // Debit Damages/Faulty account (P&L)
         await connection.query(
           `INSERT INTO journal_entry_lines (
             journal_entry_id, 
@@ -343,11 +392,11 @@ const creditNoteController = {
             credit_amount, 
             description
           ) VALUES (?, ?, ?, 0, ?)`,
-          [journalEntryId, salesRevenueAccount[0].id, subtotal, `Sales return - ${creditNoteNumber}`]
+          [journalEntryId, damagesAccount[0].id, subtotal, `Damages/Faulty products - ${creditNoteNumber}`]
         );
 
         // Debit Sales Tax Payable (if tax account exists)
-        if (salesTaxAccount.length) {
+        if (salesTaxAccount.length && tax_amount > 0) {
           await connection.query(
             `INSERT INTO journal_entry_lines (
               journal_entry_id, 
@@ -358,6 +407,193 @@ const creditNoteController = {
             ) VALUES (?, ?, ?, 0, ?)`,
             [journalEntryId, salesTaxAccount[0].id, tax_amount, `Sales tax return - ${creditNoteNumber}`]
           );
+        }
+
+      } else if (scenario_type === 'faulty_with_stock') {
+        // Scenario 2: Expired/damaged/faulty products from stock
+        // Dr. Faulty account (P&L), Cr. Store (inventory), Cr. Cost of sale account
+        
+        // Find or create damages/faulty account (P&L expense account)
+        let [damagesAccount] = await connection.query(
+          `SELECT id FROM chart_of_accounts 
+           WHERE (account_name LIKE '%damage%' OR account_name LIKE '%faulty%' OR account_name LIKE '%defect%')
+           AND account_type IN (5, 16, 18) 
+           LIMIT 1`
+        );
+        
+        // If not found, try to find any expense account with account_type 16 or 18
+        if (!damagesAccount.length) {
+          [damagesAccount] = await connection.query(
+            `SELECT id FROM chart_of_accounts 
+             WHERE account_type IN (16, 18) 
+             AND is_active = 1 
+             ORDER BY account_code 
+             LIMIT 1`
+          );
+        }
+        
+        if (!damagesAccount.length) {
+          throw new Error('Damages/Faulty account not found. Please create an expense account for damages.');
+        }
+
+        // Find inventory account (store inventory)
+        const [inventoryAccount] = await connection.query(
+          `SELECT id FROM chart_of_accounts WHERE account_code = '100001' LIMIT 1`
+        );
+        
+        if (!inventoryAccount.length) {
+          throw new Error('Inventory account not found');
+        }
+
+        // Find cost of goods sold account
+        const [cogsAccount] = await connection.query(
+          `SELECT id FROM chart_of_accounts 
+           WHERE (account_code = '500000' OR account_name LIKE '%cost of goods%' OR account_name LIKE '%cogs%')
+           AND account_type IN (5, 16) 
+           LIMIT 1`
+        );
+        
+        if (!cogsAccount.length) {
+          throw new Error('Cost of Goods Sold account not found');
+        }
+
+        // Calculate total cost of goods (for inventory and COGS entries)
+        let totalCost = 0;
+        for (const item of items) {
+          const [productData] = await connection.query(
+            'SELECT cost_price FROM products WHERE id = ?',
+            [item.product_id]
+          );
+          if (productData.length > 0) {
+            const costPrice = parseFloat(productData[0].cost_price) || 0;
+            totalCost += item.quantity * costPrice;
+          }
+        }
+
+        // Create journal entry
+        const [journalResult] = await connection.query(
+          `INSERT INTO journal_entries (
+            entry_number, 
+            entry_date, 
+            reference, 
+            description, 
+            total_debit, 
+            total_credit, 
+            status, 
+            created_by
+          ) VALUES (?, ?, ?, ?, ?, ?, 'posted', ?)`,
+          [
+            `JE-CN-${creditNoteId}-${Date.now()}`,
+            credit_note_date,
+            creditNoteNumber,
+            `Credit note ${creditNoteNumber} - Faulty products (with stock return)`,
+            total_amount + totalCost,
+            total_amount + totalCost,
+            1
+          ]
+        );
+        const journalEntryId = journalResult.insertId;
+
+        // Credit Accounts Receivable (decrease receivable)
+        await connection.query(
+          `INSERT INTO journal_entry_lines (
+            journal_entry_id, 
+            account_id, 
+            debit_amount, 
+            credit_amount, 
+            description
+          ) VALUES (?, ?, 0, ?, ?)`,
+          [journalEntryId, accountsReceivableAccount[0].id, total_amount, `Credit note ${creditNoteNumber}`]
+        );
+
+        // Debit Damages/Faulty account (P&L) - for the sales value
+        await connection.query(
+          `INSERT INTO journal_entry_lines (
+            journal_entry_id, 
+            account_id, 
+            debit_amount, 
+            credit_amount, 
+            description
+          ) VALUES (?, ?, ?, 0, ?)`,
+          [journalEntryId, damagesAccount[0].id, subtotal, `Damages/Faulty products - ${creditNoteNumber}`]
+        );
+
+        // Debit Sales Tax Payable (if tax account exists)
+        if (salesTaxAccount.length && tax_amount > 0) {
+          await connection.query(
+            `INSERT INTO journal_entry_lines (
+              journal_entry_id, 
+              account_id, 
+              debit_amount, 
+              credit_amount, 
+              description
+            ) VALUES (?, ?, ?, 0, ?)`,
+            [journalEntryId, salesTaxAccount[0].id, tax_amount, `Sales tax return - ${creditNoteNumber}`]
+          );
+        }
+
+        // Credit Inventory (store) - return inventory to damage store
+        await connection.query(
+          `INSERT INTO journal_entry_lines (
+            journal_entry_id, 
+            account_id, 
+            debit_amount, 
+            credit_amount, 
+            description
+          ) VALUES (?, ?, 0, ?, ?)`,
+          [journalEntryId, inventoryAccount[0].id, totalCost, `Inventory return to damage store - ${creditNoteNumber}`]
+        );
+
+        // Credit Cost of Goods Sold - reverse COGS
+        await connection.query(
+          `INSERT INTO journal_entry_lines (
+            journal_entry_id, 
+            account_id, 
+            debit_amount, 
+            credit_amount, 
+            description
+          ) VALUES (?, ?, 0, ?, ?)`,
+          [journalEntryId, cogsAccount[0].id, totalCost, `COGS reversal - ${creditNoteNumber}`]
+        );
+
+        // Update inventory for the damage store
+        for (const item of items) {
+          const { product_id, quantity } = item;
+          
+          // Check if product exists in the damage store inventory
+          const [existingInventory] = await connection.query(
+            'SELECT id, quantity FROM store_inventory WHERE store_id = ? AND product_id = ?',
+            [damage_store_id, product_id]
+          );
+
+          let finalQuantity;
+          if (existingInventory.length === 0) {
+            // Create new inventory record
+            finalQuantity = quantity;
+            await connection.query(
+              'INSERT INTO store_inventory (store_id, product_id, quantity, created_at, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+              [damage_store_id, product_id, quantity]
+            );
+          } else {
+            // Update existing inventory
+            const oldQuantity = existingInventory[0].quantity;
+            finalQuantity = oldQuantity + quantity;
+            await connection.query(
+              'UPDATE store_inventory SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE store_id = ? AND product_id = ?',
+              [finalQuantity, damage_store_id, product_id]
+            );
+          }
+
+          // Record inventory transaction
+          await recordInventoryTransaction({
+            storeId: damage_store_id,
+            productId: product_id,
+            quantity: quantity,
+            referenceId: creditNoteId,
+            notes: `Received from credit note ${creditNoteNumber} - Faulty products`,
+            db: connection,
+            newQuantity: finalQuantity
+          });
         }
       }
 

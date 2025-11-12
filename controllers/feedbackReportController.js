@@ -132,8 +132,93 @@ exports.exportFeedbackReportsCSV = async (req, res) => {
     }
     sql += ` ORDER BY fr.createdAt DESC`;
     const [results] = await db.query(sql, params);
-    // CSV export logic here (not shown for brevity)
-    res.json({ success: true, data: results });
+    
+    // Create CSV header information
+    const exportDate = new Date().toLocaleDateString('en-US', { 
+      weekday: 'long', 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric' 
+    });
+    
+    let filterDate;
+    if (currentDate) {
+      filterDate = new Date(currentDate).toLocaleDateString('en-US', { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      });
+    } else if (startDate && endDate) {
+      const start = new Date(startDate).toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric', 
+        year: 'numeric' 
+      });
+      const end = new Date(endDate).toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric', 
+        year: 'numeric' 
+      });
+      filterDate = startDate === endDate ? start : `${start} - ${end}`;
+    } else if (startDate) {
+      filterDate = `From ${new Date(startDate).toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric', 
+        year: 'numeric' 
+      })}`;
+    } else if (endDate) {
+      filterDate = `Until ${new Date(endDate).toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric', 
+        year: 'numeric' 
+      })}`;
+    } else {
+      filterDate = 'All Dates';
+    }
+    
+    const reportCount = results.length;
+    
+    // Create CSV content with header information - matching table structure
+    const csvHeader = [
+      ['Feedback Reports Export'],
+      [''],
+      ['Export Date:', exportDate],
+      ['Filter Date:', filterDate],
+      ['Filter Country:', country && country !== 'all' ? country : 'All Countries'],
+      ['Filter Sales Rep:', salesRep && salesRep !== 'all' ? salesRep : 'All Sales Reps'],
+      ['Filter Search:', search && search.trim() ? search.trim() : 'No Search'],
+      ['Total Reports:', reportCount.toString()],
+      [''],
+      ['Outlet', 'Country', 'Sales Rep', 'Comment', 'Date']
+    ];
+    
+    // Map data to match table structure exactly
+    const csvData = results.map(row => [
+      row.outlet || 'N/A',
+      row.country || 'N/A',
+      row.salesRep || 'N/A',
+      row.comment || 'N/A',
+      new Date(row.createdAt).toLocaleString()
+    ]);
+    
+    // Combine header and data, escape quotes properly
+    const csvContent = [...csvHeader, ...csvData]
+      .map(row => row.map(cell => {
+        const cellStr = String(cell);
+        // Escape quotes and wrap in quotes
+        return `"${cellStr.replace(/"/g, '""')}"`;
+      }).join(','))
+      .join('\n');
+    
+    // Set headers for CSV download
+    const filename = `feedback-reports-${new Date().toISOString().split('T')[0]}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    
+    // Add BOM for Excel compatibility and send CSV
+    const csvWithBOM = '\ufeff' + csvContent;
+    res.send(csvWithBOM);
   } catch (err) {
     console.error('Error exporting feedback reports:', err);
     res.status(500).json({ success: false, error: err.message });

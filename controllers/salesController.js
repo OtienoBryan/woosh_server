@@ -43,14 +43,24 @@ exports.getAllRoutes = async (req, res) => {
 // Get all sales reps
 exports.getAllSalesReps = async (req, res) => {
   try {
-    const { status } = req.query;
+    const { status, country } = req.query;
     
     let query = 'SELECT * FROM SalesRep';
     let params = [];
+    const where = [];
     
     if (status !== undefined) {
-      query += ' WHERE status = ?';
+      where.push('status = ?');
       params.push(status);
+    }
+    
+    if (country) {
+      where.push('country = ?');
+      params.push(country);
+    }
+    
+    if (where.length > 0) {
+      query += ' WHERE ' + where.join(' AND ');
     }
     
     query += ' ORDER BY name';
@@ -779,7 +789,7 @@ exports.getSalesRepPerformance = async (req, res) => {
 // Get master sales data for all clients by year
 exports.getMasterSalesData = async (req, res) => {
   try {
-    const { year, category, salesRep, categoryGroup, startDate, endDate, clientStatus, viewType, page, limit, sortColumn, sortDirection } = req.query;
+    const { year, category, salesRep, categoryGroup, startDate, endDate, clientStatus, viewType, page, limit, sortColumn, sortDirection, search } = req.query;
     const currentYear = year || new Date().getFullYear();
     const isQuantityView = viewType === 'quantity';
     
@@ -792,11 +802,17 @@ exports.getMasterSalesData = async (req, res) => {
     const categories = category ? (Array.isArray(category) ? category : [category]) : [];
     const salesReps = salesRep ? (Array.isArray(salesRep) ? salesRep : [salesRep]) : [];
 
-    console.log(`[Master Sales] Fetching page ${currentPage} with ${itemsPerPage} items (Sort: ${sortColumn || 'none'} ${sortDirection || ''})`);
+    console.log(`[Master Sales] Fetching page ${currentPage} with ${itemsPerPage} items (Sort: ${sortColumn || 'none'} ${sortDirection || ''}, Search: ${search || 'none'})`);
 
     // Build WHERE conditions
     const conditions = [];
     const params = [];
+    
+    // Search filter - searches all records, not just current page
+    if (search && search.trim()) {
+      conditions.push('c.name LIKE ?');
+      params.push(`%${search.trim()}%`);
+    }
     
     if (categories.length > 0) {
       conditions.push('cat.id IN (' + categories.map(() => '?').join(',') + ')');
@@ -891,10 +907,55 @@ exports.getMasterSalesData = async (req, res) => {
 
     console.log(`[Master Sales] Returned ${rows.length} clients (Page ${currentPage}/${totalPages})`);
 
-    // Return data with pagination metadata
+    // Calculate totals from ALL filtered records (not just current page)
+    const totalsYearParams = Array(13).fill(currentYear); // 12 months + total
+    const totalsParams = [...totalsYearParams, ...params];
+    
+    const [totalsResult] = await db.query(`
+      SELECT 
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 1 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as january,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 2 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as february,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 3 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as march,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 4 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as april,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 5 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as may,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 6 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as june,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 7 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as july,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 8 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as august,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 9 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as september,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 10 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as october,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 11 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as november,
+        COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 12 AND YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as december,
+        COALESCE(SUM(CASE WHEN YEAR(so.order_date) = ? THEN ${isQuantityView ? 'soi.quantity' : 'soi.quantity * soi.unit_price'} ELSE 0 END), 0) as total
+      FROM Clients c
+      LEFT JOIN sales_orders so ON c.id = so.client_id AND so.my_status IN (1, 2, 3, 7)
+      LEFT JOIN sales_order_items soi ON so.id = soi.sales_order_id
+      LEFT JOIN products p ON soi.product_id = p.id
+      LEFT JOIN Category cat ON p.category_id = cat.id
+      LEFT JOIN SalesRep sr ON c.route_id_update = sr.route_id_update
+      ${whereClause}
+    `, totalsParams);
+
+    const totals = totalsResult[0] || {
+      january: 0,
+      february: 0,
+      march: 0,
+      april: 0,
+      may: 0,
+      june: 0,
+      july: 0,
+      august: 0,
+      september: 0,
+      october: 0,
+      november: 0,
+      december: 0,
+      total: 0
+    };
+
+    // Return data with pagination metadata and totals
     res.json({
       success: true,
       data: rows,
+      totals: totals,
       pagination: {
         currentPage,
         itemsPerPage,
@@ -1364,8 +1425,15 @@ exports.getSalesRepMonthlyPerformance = async (req, res) => {
     // Parse salesRep as array
     const salesReps = salesRep ? (Array.isArray(salesRep) ? salesRep : [salesRep]) : [];
 
-
-
+    console.log('[getSalesRepMonthlyPerformance] Query params:', {
+      year: currentYear,
+      salesRep,
+      startDate,
+      endDate,
+      viewType,
+      country,
+      salesReps
+    });
 
     // Get all sales reps with their monthly sales data using salesrep from sales_orders
     let rows;
@@ -1426,17 +1494,17 @@ exports.getSalesRepMonthlyPerformance = async (req, res) => {
       WHERE sr.status = 1
       ${(() => {
         const conditions = [];
-        if (country) {
+        if (country && country.trim() !== '') {
           conditions.push('sr.country = ?');
         }
         if (salesReps.length > 0) {
           conditions.push('sr.id IN (' + salesReps.map(() => '?').join(',') + ')');
         }
         if (startDate) {
-          conditions.push('so.order_date >= ?');
+          conditions.push('(so.order_date >= ? OR so.order_date IS NULL)');
         }
         if (endDate) {
-          conditions.push('so.order_date <= ?');
+          conditions.push('(so.order_date <= ? OR so.order_date IS NULL)');
         }
         return conditions.length > 0 ? 'AND ' + conditions.join(' AND ') : '';
       })()}
@@ -1463,7 +1531,7 @@ exports.getSalesRepMonthlyPerformance = async (req, res) => {
           currentYear // ORDER BY total
         ];
       }
-      if (country) params.push(country);
+      if (country && country.trim() !== '') params.push(country);
       if (salesReps.length > 0) params.push(...salesReps);
       if (startDate) params.push(startDate);
       if (endDate) params.push(endDate);
@@ -1471,6 +1539,23 @@ exports.getSalesRepMonthlyPerformance = async (req, res) => {
     })());
 
       rows = queryRows;
+      console.log('[getSalesRepMonthlyPerformance] Query returned', rows.length, 'rows');
+      if (rows.length > 0) {
+        console.log('[getSalesRepMonthlyPerformance] Sample row:', {
+          sales_rep_id: rows[0].sales_rep_id,
+          sales_rep_name: rows[0].sales_rep_name,
+          total: rows[0].total || rows[0].total_vapes || 'N/A'
+        });
+      } else {
+        console.log('[getSalesRepMonthlyPerformance] No rows returned. Checking data...');
+        // Debug query to check if there are any sales reps
+        const [salesRepCheck] = await db.query('SELECT COUNT(*) as count FROM SalesRep WHERE status = 1' + (country && country.trim() !== '' ? ' AND country = ?' : ''), country && country.trim() !== '' ? [country] : []);
+        console.log('[getSalesRepMonthlyPerformance] Active sales reps count:', salesRepCheck[0].count);
+        
+        // Check if there are any sales orders
+        const [salesOrdersCheck] = await db.query('SELECT COUNT(*) as count FROM sales_orders WHERE my_status IN (1, 2, 3, 7) AND YEAR(order_date) = ?', [currentYear]);
+        console.log('[getSalesRepMonthlyPerformance] Sales orders count for year', currentYear, ':', salesOrdersCheck[0].count);
+      }
     } catch (queryErr) {
       console.error('Main query error:', queryErr.message);
       console.error('Query parameters:', {
@@ -1479,7 +1564,8 @@ exports.getSalesRepMonthlyPerformance = async (req, res) => {
         isQuantityView,
         salesReps,
         startDate,
-        endDate
+        endDate,
+        country
       });
       throw queryErr;
     }

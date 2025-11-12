@@ -1102,12 +1102,10 @@ app.get('/api/feedback-reports/export', authenticateToken, async (req, res) => {
       ['Filter Search:', search && search.trim() ? search.trim() : 'No Search'],
       ['Total Reports:', reportCount.toString()],
       [''],
-      ['ID', 'Report ID', 'Outlet', 'Country', 'Sales Rep', 'Comment', 'Created At']
+      ['Outlet', 'Country', 'Sales Rep', 'Comment', 'Date']
     ];
     
     const csvData = results.map(row => [
-      row.id,
-      row.reportId,
       row.outlet || 'N/A',
       row.country || 'N/A',
       row.salesRep || 'N/A',
@@ -1121,10 +1119,12 @@ app.get('/api/feedback-reports/export', authenticateToken, async (req, res) => {
     
     // Set headers for CSV download
     const filename = `feedback-reports-${new Date().toISOString().split('T')[0]}.csv`;
-    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     
-    res.send(csvContent);
+    // Add BOM for Excel compatibility and send CSV
+    const csvWithBOM = '\ufeff' + csvContent;
+    res.send(csvWithBOM);
   } catch (err) {
     console.error('Error exporting feedback reports:', err);
     res.status(500).json({ success: false, error: err.message });

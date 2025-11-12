@@ -41,7 +41,7 @@ const clientController = {
         params.push(regionId);
       }
       if (routeId) {
-        whereClauses.push('c.route_id = ?');
+        whereClauses.push('c.route_id_update = ?');
         params.push(routeId);
       }
       if (whereClauses.length > 0) {

@@ -72,24 +72,44 @@ const journeyPlanController = {
       res.status(500).json({ success: false, message: 'Failed to fetch route compliance', error: error.message });
     }
   },
-  // Get all journey plans (with optional date filtering)
+  // Get all journey plans (with optional date, country filtering, and limit)
   getAllJourneyPlans: async (req, res) => {
     try {
-      const { startDate, endDate } = req.query;
+      const { startDate, endDate, country, limit } = req.query;
+      const limitValue = limit ? parseInt(limit, 10) : null;
 
-      // Only select fields used by OverallAttendancePage for speed
+      // Build SQL query with JOIN to SalesRep for country filtering
       let sql = `
         SELECT 
           jp.id,
+          jp.date,
+          jp.time,
           jp.userId,
           jp.clientId,
-          jp.date,
+          jp.status,
           jp.checkInTime,
-          jp.checkoutTime
+          jp.latitude,
+          jp.longitude,
+          jp.imageUrl,
+          jp.notes,
+          jp.checkoutLatitude,
+          jp.checkoutLongitude,
+          jp.checkoutTime,
+          jp.showUpdateLocation,
+          jp.routeId,
+          sr.name as user_name,
+          sr.country as sales_rep_country,
+          c.name as client_name,
+          r.name as route_name
         FROM JourneyPlan jp
+        LEFT JOIN SalesRep sr ON jp.userId = sr.id
+        LEFT JOIN Clients c ON jp.clientId = c.id
+        LEFT JOIN routes r ON jp.routeId = r.id
       `;
       const params = [];
       const where = [];
+      
+      // Date filtering
       if (startDate && endDate) {
         where.push('DATE(jp.date) BETWEEN ? AND ?');
         params.push(startDate, endDate);
@@ -100,10 +120,23 @@ const journeyPlanController = {
         where.push('DATE(jp.date) <= ?');
         params.push(endDate);
       }
+      
+      // Country filtering
+      if (country) {
+        where.push('sr.country = ?');
+        params.push(country);
+      }
+      
       if (where.length) {
         sql += ' WHERE ' + where.join(' AND ');
       }
       sql += ' ORDER BY jp.date DESC';
+      
+      // Add LIMIT for performance optimization (use parameterized query for safety)
+      if (limitValue && limitValue > 0 && limitValue <= 1000) {
+        sql += ' LIMIT ?';
+        params.push(limitValue);
+      }
 
       const [plans] = await db.query(sql, params);
       

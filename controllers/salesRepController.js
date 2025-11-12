@@ -4,15 +4,22 @@ const salesRepController = {
   // Get all sales representatives
   getAllSalesReps: async (req, res) => {
     try {
-      const { status } = req.query;
+      const { status, country } = req.query;
       
-      let whereClause = '';
+      const where = [];
       let params = [];
       
       if (status !== undefined) {
-        whereClause = 'WHERE s.status = ?';
+        where.push('s.status = ?');
         params.push(status);
       }
+      
+      if (country) {
+        where.push('s.country = ?');
+        params.push(country);
+      }
+      
+      const whereClause = where.length > 0 ? 'WHERE ' + where.join(' AND ') : '';
       
       const [reps] = await db.query(`
         SELECT s.id, s.name, s.email, s.phoneNumber as phone, s.status, s.route_id_update, 

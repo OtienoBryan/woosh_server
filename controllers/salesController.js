@@ -3,13 +3,38 @@ const multer = require('multer');
 const cloudinary = require('../config/cloudinary');
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Get all countries
+// Get all countries (preferably only those that have sales reps)
 exports.getAllCountries = async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT * FROM Country ORDER BY name');
+    // Fetch distinct countries that have active sales reps
+    const [rows] = await db.query(`
+      SELECT DISTINCT c.id, c.name 
+      FROM Country c
+      INNER JOIN SalesRep sr ON sr.countryId = c.id
+      WHERE sr.status = 1
+      ORDER BY c.name
+    `);
+    
+    // If no countries found with sales reps, fetch all countries
+    if (rows.length === 0) {
+      console.log('[getAllCountries] No countries found with sales reps, fetching all countries from Country table');
+      const [allCountries] = await db.query('SELECT id, name FROM Country ORDER BY name');
+      return res.json(allCountries);
+    }
+    
+    console.log('[getAllCountries] Found', rows.length, 'countries with active sales reps');
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch countries', details: err.message });
+    console.error('[getAllCountries] Error:', err);
+    // Fallback: try to fetch all countries if the JOIN fails
+    try {
+      const [allCountries] = await db.query('SELECT id, name FROM Country ORDER BY name');
+      console.log('[getAllCountries] Fallback: Returning all countries from Country table');
+      res.json(allCountries);
+    } catch (fallbackErr) {
+      console.error('[getAllCountries] Fallback also failed:', fallbackErr);
+      res.status(500).json({ error: 'Failed to fetch countries', details: err.message });
+    }
   }
 };
 
@@ -1418,6 +1443,9 @@ exports.getSalesRepReports = async (req, res) => {
 // Get sales rep monthly performance data
 exports.getSalesRepMonthlyPerformance = async (req, res) => {
   try {
+    console.log('[getSalesRepMonthlyPerformance] ===== START =====');
+    console.log('[getSalesRepMonthlyPerformance] Full request query:', JSON.stringify(req.query, null, 2));
+    
     const { year, salesRep, startDate, endDate, viewType, country } = req.query;
     const currentYear = year || new Date().getFullYear();
     const isQuantityView = viewType === 'quantity';
@@ -1425,23 +1453,84 @@ exports.getSalesRepMonthlyPerformance = async (req, res) => {
     // Parse salesRep as array
     const salesReps = salesRep ? (Array.isArray(salesRep) ? salesRep : [salesRep]) : [];
 
-    console.log('[getSalesRepMonthlyPerformance] Query params:', {
+    // Get countryId from Country table based on country name
+    let countryId = null;
+    let countryName = null;
+    if (country && country.trim() !== '') {
+      countryName = country.trim();
+      try {
+        // First, check what countries are in the Country table
+        const [allCountries] = await db.query('SELECT id, name FROM Country ORDER BY name');
+        console.log('[getSalesRepMonthlyPerformance] Available countries in Country table:', allCountries);
+        
+        // Look up countryId from Country table by name
+        const [countryRows] = await db.query(
+          'SELECT id FROM Country WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1',
+          [countryName]
+        );
+        
+        if (countryRows.length > 0) {
+          countryId = countryRows[0].id;
+          console.log('[getSalesRepMonthlyPerformance] ✓ Found countryId:', countryId, 'for country:', countryName);
+        } else {
+          console.log('[getSalesRepMonthlyPerformance] ✗ Country not found in Country table:', countryName);
+          console.log('[getSalesRepMonthlyPerformance] Trying fallback mapping...');
+          // Fallback: try manual mapping
+          const countryNameLower = countryName.toLowerCase();
+          if (countryNameLower === 'kenya') {
+            countryId = 1;
+          } else if (countryNameLower === 'tanzania') {
+            countryId = 2;
+          }
+          console.log('[getSalesRepMonthlyPerformance] Fallback countryId:', countryId);
+        }
+      } catch (countryErr) {
+        console.error('[getSalesRepMonthlyPerformance] ✗ Error looking up country:', countryErr);
+        console.error('[getSalesRepMonthlyPerformance] Error details:', countryErr.message);
+        // Fallback: try manual mapping
+        const countryNameLower = countryName.toLowerCase();
+        if (countryNameLower === 'kenya') {
+          countryId = 1;
+        } else if (countryNameLower === 'tanzania') {
+          countryId = 2;
+        }
+        console.log('[getSalesRepMonthlyPerformance] Fallback countryId after error:', countryId);
+      }
+    }
+
+    console.log('[getSalesRepMonthlyPerformance] Parsed params:', {
       year: currentYear,
       salesRep,
+      salesReps: salesReps,
       startDate,
       endDate,
       viewType,
-      country,
-      salesReps
+      isQuantityView,
+      country: country,
+      countryName: countryName,
+      countryId: countryId,
+      countryIdMapped: countryId !== null
     });
 
     // Get all sales reps with their monthly sales data using salesrep from sales_orders
+    // IMPORTANT: LEFT JOIN ensures sales reps are returned even if they have no orders
     let rows;
     try {
-      const [queryRows] = await db.query(`
+      console.log('[getSalesRepMonthlyPerformance] ===== EXECUTING MAIN QUERY =====');
+      console.log('[getSalesRepMonthlyPerformance] Year filter:', currentYear);
+      console.log('[getSalesRepMonthlyPerformance] Country filter status:', {
+        country: country,
+        countryName: countryName,
+        countryId: countryId,
+        willFilter: countryId !== null
+      });
+      
+      const queryString = `
       SELECT 
         sr.id as sales_rep_id,
         sr.name as sales_rep_name,
+        sr.countryId as countryId,
+        COALESCE(c.name, CASE WHEN sr.countryId = 1 THEN 'Kenya' WHEN sr.countryId = 2 THEN 'Tanzania' ELSE NULL END) as country,
         ${isQuantityView ? `
         -- Vapes quantities (categories 1, 3)
         COALESCE(SUM(CASE WHEN MONTH(so.order_date) = 1 AND YEAR(so.order_date) = ? AND p.category_id IN (1, 3) THEN soi.quantity ELSE 0 END), 0) as january_vapes,
@@ -1488,14 +1577,19 @@ exports.getSalesRepMonthlyPerformance = async (req, res) => {
         COALESCE(SUM(CASE WHEN YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0) as total
         `}
       FROM SalesRep sr
-      LEFT JOIN sales_orders so ON (sr.id = so.salesrep OR sr.id = CAST(so.salesrep AS UNSIGNED)) AND so.my_status IN (1, 2, 3, 7)
+      LEFT JOIN Country c ON sr.countryId = c.id
+      LEFT JOIN sales_orders so ON (
+        (sr.id = so.salesrep OR sr.id = CAST(so.salesrep AS UNSIGNED)) 
+        AND so.my_status IN (1, 2, 3, 7)
+      )
       LEFT JOIN sales_order_items soi ON so.id = soi.sales_order_id
       LEFT JOIN products p ON soi.product_id = p.id
       WHERE sr.status = 1
       ${(() => {
         const conditions = [];
-        if (country && country.trim() !== '') {
-          conditions.push('sr.country = ?');
+        if (countryId !== null) {
+          console.log('[getSalesRepMonthlyPerformance] Applying country filter by countryId:', countryId);
+          conditions.push('sr.countryId = ?');
         }
         if (salesReps.length > 0) {
           conditions.push('sr.id IN (' + salesReps.map(() => '?').join(',') + ')');
@@ -1506,14 +1600,26 @@ exports.getSalesRepMonthlyPerformance = async (req, res) => {
         if (endDate) {
           conditions.push('(so.order_date <= ? OR so.order_date IS NULL)');
         }
-        return conditions.length > 0 ? 'AND ' + conditions.join(' AND ') : '';
+        const whereClause = conditions.length > 0 ? 'AND ' + conditions.join(' AND ') : '';
+        console.log('[getSalesRepMonthlyPerformance] ===== WHERE CLAUSE CONSTRUCTION =====');
+        console.log('[getSalesRepMonthlyPerformance] Conditions array:', conditions);
+        console.log('[getSalesRepMonthlyPerformance] Final WHERE clause:', whereClause);
+        if (countryId !== null) {
+          console.log('[getSalesRepMonthlyPerformance] Country filter IS applied');
+          console.log('[getSalesRepMonthlyPerformance] Country filter countryId:', countryId);
+        } else {
+          console.log('[getSalesRepMonthlyPerformance] Country filter NOT applied');
+        }
+        return whereClause;
       })()}
-      GROUP BY sr.id, sr.name
+      GROUP BY sr.id, sr.name, sr.countryId
       ORDER BY ${isQuantityView ? 
         '(COALESCE(SUM(CASE WHEN YEAR(so.order_date) = ? AND p.category_id IN (1, 3) THEN soi.quantity ELSE 0 END), 0) + COALESCE(SUM(CASE WHEN YEAR(so.order_date) = ? AND p.category_id IN (4, 5) THEN soi.quantity ELSE 0 END), 0))' : 
         'COALESCE(SUM(CASE WHEN YEAR(so.order_date) = ? THEN soi.quantity * soi.unit_price ELSE 0 END), 0)'
       } DESC, sr.name
-    `, (() => {
+    `;
+      
+      const params = (() => {
       let params;
       if (isQuantityView) {
         // For quantity view: 12 months for vapes + 1 total for vapes + 12 months for pouches + 1 total for pouches + 2 for ORDER BY = 28 parameters
@@ -1531,28 +1637,131 @@ exports.getSalesRepMonthlyPerformance = async (req, res) => {
           currentYear // ORDER BY total
         ];
       }
-      if (country && country.trim() !== '') params.push(country);
+      if (countryId !== null) {
+        console.log('[getSalesRepMonthlyPerformance] Adding countryId param:', countryId);
+        params.push(countryId);
+      }
       if (salesReps.length > 0) params.push(...salesReps);
       if (startDate) params.push(startDate);
       if (endDate) params.push(endDate);
+      console.log('[getSalesRepMonthlyPerformance] Final params array (length:', params.length, '):', params);
+      console.log('[getSalesRepMonthlyPerformance] Parameter breakdown:', {
+        countryIdInParams: countryId !== null,
+        countryIdValue: countryId,
+        salesRepsCount: salesReps.length,
+        hasStartDate: !!startDate,
+        hasEndDate: !!endDate,
+        totalParams: params.length
+      });
       return params;
-    })());
+    })();
+
+      console.log('[getSalesRepMonthlyPerformance] About to execute query with', params.length, 'parameters');
+      
+      // Test: Run a simpler query first to verify country filter works
+      if (countryId !== null) {
+        const [testCountryFilter] = await db.query(
+          'SELECT COUNT(*) as count FROM SalesRep WHERE status = 1 AND countryId = ?',
+          [countryId]
+        );
+        console.log('[getSalesRepMonthlyPerformance] TEST: Sales reps with countryId', countryId, ':', testCountryFilter[0].count);
+        
+        if (testCountryFilter[0].count === 0) {
+          console.log('[getSalesRepMonthlyPerformance] ⚠️ WARNING: No sales reps found with countryId:', countryId);
+          console.log('[getSalesRepMonthlyPerformance] Checking all countryId values in SalesRep table...');
+          const [allCountryIds] = await db.query(
+            'SELECT DISTINCT countryId, COUNT(*) as count FROM SalesRep WHERE status = 1 GROUP BY countryId'
+          );
+          console.log('[getSalesRepMonthlyPerformance] All countryId values:', allCountryIds);
+        }
+      }
+      
+      const [queryRows] = await db.query(queryString, params);
 
       rows = queryRows;
-      console.log('[getSalesRepMonthlyPerformance] Query returned', rows.length, 'rows');
-      if (rows.length > 0) {
-        console.log('[getSalesRepMonthlyPerformance] Sample row:', {
-          sales_rep_id: rows[0].sales_rep_id,
-          sales_rep_name: rows[0].sales_rep_name,
-          total: rows[0].total || rows[0].total_vapes || 'N/A'
-        });
-      } else {
-        console.log('[getSalesRepMonthlyPerformance] No rows returned. Checking data...');
-        // Debug query to check if there are any sales reps
-        const [salesRepCheck] = await db.query('SELECT COUNT(*) as count FROM SalesRep WHERE status = 1' + (country && country.trim() !== '' ? ' AND country = ?' : ''), country && country.trim() !== '' ? [country] : []);
-        console.log('[getSalesRepMonthlyPerformance] Active sales reps count:', salesRepCheck[0].count);
+      console.log('[getSalesRepMonthlyPerformance] ===== QUERY RESULTS =====');
+      console.log('[getSalesRepMonthlyPerformance] Raw query rows returned:', rows.length);
+      
+      if (countryId !== null && rows.length > 0) {
+        console.log('[getSalesRepMonthlyPerformance] Sample countryId from results:', rows.slice(0, 3).map(r => ({ name: r.sales_rep_name, countryId: r.countryId })));
+      }
+      
+      if (rows.length === 0) {
+        console.log('[getSalesRepMonthlyPerformance] ⚠️ WARNING: Query returned 0 rows but diagnostic shows matching data');
         
-        // Check if there are any sales orders
+        // Test 1: Get sales reps without any JOINs
+        const [testSalesReps] = await db.query(
+          'SELECT id, name, countryId FROM SalesRep WHERE status = 1',
+          []
+        );
+        console.log('[getSalesRepMonthlyPerformance] Test 1 - Sales reps matching filter:', testSalesReps.length);
+        if (testSalesReps.length > 0 && testSalesReps.length <= 10) {
+          console.log('[getSalesRepMonthlyPerformance] First 3 sales reps:', testSalesReps.slice(0, 3));
+        }
+        
+        // Test 2: Check if we can get sales reps with LEFT JOIN (simplified query)
+        if (testSalesReps.length > 0) {
+          const testId = testSalesReps[0].id;
+          const [testJoin] = await db.query(`
+            SELECT sr.id, sr.name, sr.countryId, COUNT(so.id) as order_count
+            FROM SalesRep sr
+            LEFT JOIN sales_orders so ON (sr.id = so.salesrep OR sr.id = CAST(so.salesrep AS UNSIGNED)) 
+              AND so.my_status IN (1, 2, 3, 7)
+            WHERE sr.status = 1
+            GROUP BY sr.id, sr.name, sr.countryId
+            LIMIT 5
+          `, []);
+          console.log('[getSalesRepMonthlyPerformance] Test 2 - Simple LEFT JOIN query returned:', testJoin.length, 'rows');
+          if (testJoin.length > 0) {
+            console.log('[getSalesRepMonthlyPerformance] Test 2 results:', testJoin);
+          }
+        }
+        
+        // Test 3: Check actual salesrep column values in orders
+        if (testSalesReps.length > 0) {
+          const salesRepIds = testSalesReps.slice(0, 5).map(r => r.id);
+          const [testOrders] = await db.query(`
+            SELECT DISTINCT so.salesrep, 
+                   CAST(so.salesrep AS UNSIGNED) as salesrep_int,
+                   COUNT(*) as order_count
+            FROM sales_orders so 
+            WHERE so.my_status IN (1, 2, 3, 7) 
+              AND YEAR(so.order_date) = ?
+            GROUP BY so.salesrep
+            LIMIT 10
+          `, [currentYear]);
+          console.log('[getSalesRepMonthlyPerformance] Test 3 - Actual salesrep values in orders for year', currentYear, ':', testOrders.length, 'unique values');
+          if (testOrders.length > 0) {
+            console.log('[getSalesRepMonthlyPerformance] Test 3 sample:', testOrders);
+            console.log('[getSalesRepMonthlyPerformance] Sales rep IDs from filter:', salesRepIds);
+            console.log('[getSalesRepMonthlyPerformance] Do any salesrep values match?', testOrders.some(o => salesRepIds.includes(o.salesrep_int)));
+          }
+        }
+      }
+      
+      console.log('[getSalesRepMonthlyPerformance] Final rows count:', rows.length);
+      
+      if (rows.length > 0) {
+        console.log('[getSalesRepMonthlyPerformance] First 3 rows sample:', rows.slice(0, 3).map(row => ({
+          sales_rep_id: row.sales_rep_id,
+          sales_rep_name: row.sales_rep_name,
+          countryId: row.countryId || 'NULL/UNDEFINED',
+          total: row.total || row.total_vapes || 'N/A'
+        })));
+        
+        // Check unique countryIds in results
+        const uniqueCountryIds = [...new Set(rows.map(r => r.countryId).filter(c => c !== null && c !== undefined))];
+        console.log('[getSalesRepMonthlyPerformance] Unique countryIds in results:', uniqueCountryIds);
+        console.log('[getSalesRepMonthlyPerformance] Total unique countryIds:', uniqueCountryIds.length);
+      } else {
+        console.log('[getSalesRepMonthlyPerformance] ⚠️ No rows returned. Running diagnostic queries...');
+        
+        // Debug query 1: Check all sales reps
+        const [allSalesRepsCheck] = await db.query('SELECT COUNT(*) as count FROM SalesRep WHERE status = 1', []);
+        console.log('[getSalesRepMonthlyPerformance] Total active sales reps:', allSalesRepsCheck[0].count);
+        
+        
+        // Debug query 3: Check if there are any sales orders
         const [salesOrdersCheck] = await db.query('SELECT COUNT(*) as count FROM sales_orders WHERE my_status IN (1, 2, 3, 7) AND YEAR(order_date) = ?', [currentYear]);
         console.log('[getSalesRepMonthlyPerformance] Sales orders count for year', currentYear, ':', salesOrdersCheck[0].count);
       }
@@ -1612,9 +1821,13 @@ exports.getSalesRepMonthlyPerformance = async (req, res) => {
       // Continue without targets - they're optional
     }
 
+    console.log('[getSalesRepMonthlyPerformance] ===== SUCCESS =====');
+    console.log('[getSalesRepMonthlyPerformance] Returning', rows.length, 'rows');
     res.json(rows);
   } catch (err) {
-    console.error('Error fetching sales rep monthly performance:', err);
+    console.error('[getSalesRepMonthlyPerformance] ===== ERROR =====');
+    console.error('[getSalesRepMonthlyPerformance] Error fetching sales rep monthly performance:', err);
+    console.error('[getSalesRepMonthlyPerformance] Error stack:', err.stack);
     res.status(500).json({ error: 'Failed to fetch sales rep monthly performance', details: err.message });
   }
 };

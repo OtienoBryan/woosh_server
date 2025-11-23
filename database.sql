@@ -176,6 +176,24 @@ ON DUPLICATE KEY UPDATE name=name;
 ALTER TABLE departments ADD COLUMN is_active BOOLEAN DEFAULT TRUE;
 ALTER TABLE staff ADD COLUMN is_active BOOLEAN DEFAULT TRUE;
 
+-- Create department_expenses table
+CREATE TABLE IF NOT EXISTS department_expenses (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  department_id INT NULL,
+  department_name VARCHAR(255),
+  description TEXT NOT NULL,
+  amount DECIMAL(15,2) NOT NULL,
+  document_url VARCHAR(500) NOT NULL,
+  document_name VARCHAR(255),
+  document_storage ENUM('local', 'cloudinary') DEFAULT 'cloudinary',
+  uploaded_by INT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_department_expenses_department_id (department_id),
+  INDEX idx_department_expenses_uploaded_by (uploaded_by),
+  CONSTRAINT fk_department_expenses_department FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE SET NULL,
+  CONSTRAINT fk_department_expenses_staff FOREIGN KEY (uploaded_by) REFERENCES staff(id) ON DELETE SET NULL
+);
+
 -- Create employee_documents table
 CREATE TABLE IF NOT EXISTS employee_documents (
   id INT PRIMARY KEY AUTO_INCREMENT,

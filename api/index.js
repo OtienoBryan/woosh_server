@@ -5,7 +5,7 @@ const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 // Try to require database and other modules, but don't crash if they fail
-let db, staffController, roleController, multer, upload, uploadController, teamController, clientController, branchController, serviceChargeController, journeyPlanController, payrollRoutes, financialRoutes, staffRoutes, chatRoutes, clientRoutes, salesRoutes, managerRoutes, noticeRoutes, salesRepLeaveRoutes, calendarTaskRoutes, userRoutes, loginHistoryRoutes, journeyPlanRoutes, riderRoutes, myVisibilityReportRoutes, feedbackReportRoutes, availabilityReportRoutes, leaveRequestRoutes, supplierRoutes, receiptRoutes, myAssetsRoutes, faultyProductsRoutes, storeRoutes, authRoutes, routesRoutes, assetPurchaseOrderRoutes;
+let db, staffController, roleController, multer, upload, uploadController, teamController, clientController, branchController, serviceChargeController, journeyPlanController, payrollRoutes, financialRoutes, staffRoutes, chatRoutes, clientRoutes, salesRoutes, managerRoutes, noticeRoutes, salesRepLeaveRoutes, calendarTaskRoutes, userRoutes, loginHistoryRoutes, journeyPlanRoutes, riderRoutes, myVisibilityReportRoutes, feedbackReportRoutes, availabilityReportRoutes, leaveRequestRoutes, supplierRoutes, receiptRoutes, myAssetsRoutes, faultyProductsRoutes, storeRoutes, authRoutes, routesRoutes, assetPurchaseOrderRoutes, departmentExpenseRoutes;
 
 try {
   db = require('../database/db');
@@ -45,6 +45,7 @@ try {
   authRoutes = require('../routes/authRoutes');
   routesRoutes = require('../routes/routesRoutes');
   assetPurchaseOrderRoutes = require('../routes/assetPurchaseOrderRoutes');
+  departmentExpenseRoutes = require('../routes/departmentExpenseRoutes');
 } catch (error) {
   console.log('Some modules failed to load:', error.message);
 }
@@ -157,6 +158,9 @@ if (chatRoutes) app.use('/api/chat', chatRoutes);
 if (assetPurchaseOrderRoutes) {
   console.log('Using assetPurchaseOrderRoutes');
   app.use('/api/asset-purchase-orders', assetPurchaseOrderRoutes);
+}
+if (departmentExpenseRoutes) {
+  app.use('/api/department-expenses', departmentExpenseRoutes);
 }
 
 // Error handling middleware

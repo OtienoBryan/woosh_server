@@ -7,6 +7,7 @@ const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
 const documentController = require('../controllers/documentController');
 const calendarTaskController = require('../controllers/calendarTaskController');
+const publicHolidaysController = require('../controllers/publicHolidaysController');
 const { authenticateToken } = require('../middleware/auth');
 //const upload = multer({ dest: 'http://www.citlogisticssystems.com/woosh/admin/upload/staff/' });
 
@@ -42,6 +43,14 @@ router.post('/document-categories', documentController.createCategory);
 router.put('/document-categories/:id', documentController.updateCategory);
 router.delete('/document-categories/:id', documentController.deleteCategory);
 
+// Document folder management routes
+router.get('/document-folders', documentController.getAllFolders);
+router.get('/document-folders/:id', documentController.getFolderById);
+router.post('/document-folders', documentController.createFolder);
+router.put('/document-folders/:id', documentController.updateFolder);
+router.delete('/document-folders/:id', documentController.deleteFolder);
+router.post('/document-folders/migrate', documentController.runFolderMigration);
+
 // Employee contract routes
 router.post('/staff/:id/contracts', upload.single('file'), staffController.uploadContract);
 router.get('/staff/:id/contracts', staffController.getContracts);
@@ -68,6 +77,13 @@ router.delete('/staff/warnings/:warningId', staffController.deleteWarning);
 router.get('/calendar-tasks', calendarTaskController.getTasks);
 router.post('/calendar-tasks', calendarTaskController.addTask);
 router.delete('/calendar-tasks/:id', calendarTaskController.deleteTask);
+
+// Public Holidays routes
+router.get('/public-holidays', publicHolidaysController.getAllHolidays);
+router.get('/public-holidays/month', publicHolidaysController.getHolidaysByMonth);
+router.post('/public-holidays', publicHolidaysController.addHoliday);
+router.put('/public-holidays/:id', publicHolidaysController.updateHoliday);
+router.delete('/public-holidays/:id', publicHolidaysController.deleteHoliday);
 
 // Department routes
 router.get('/departments', departmentController.getAllDepartments);

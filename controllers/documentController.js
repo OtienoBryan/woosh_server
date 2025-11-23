@@ -11,7 +11,7 @@ const documentController = {
       console.log('📤 Request body:', req.body);
       console.log('📤 Request file:', req.file ? 'File present' : 'No file');
       
-      const { title, category, description, start_date, end_date } = req.body;
+      const { title, category, description, start_date, end_date, parent_folder_id } = req.body;
       if (!title || !category || !req.file) {
         console.log('❌ Missing required fields:', { title: !!title, category: !!category, file: !!req.file });
         return res.status(400).json({ message: 'Title, category, and file are required.' });
@@ -98,9 +98,11 @@ const documentController = {
       const startDateValue = start_date && start_date.trim() !== '' ? start_date : null;
       const endDateValue = end_date && end_date.trim() !== '' ? end_date : null;
       
+      const parentFolderId = parent_folder_id && parent_folder_id !== '' && parent_folder_id !== 'null' ? parseInt(parent_folder_id) : null;
+      
       await db.query(
-        'INSERT INTO documents (title, category, file_url, description, start_date, end_date, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, NOW())',
-        [title, category, fileUrl, description || null, startDateValue, endDateValue]
+        'INSERT INTO documents (title, category, file_url, description, start_date, end_date, parent_folder_id, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())',
+        [title, category, fileUrl, description || null, startDateValue, endDateValue, parentFolderId]
       );
       
       console.log('✅ Document saved to database successfully');
@@ -112,7 +114,22 @@ const documentController = {
   },
   getAllDocuments: async (req, res) => {
     try {
-      const [rows] = await db.query('SELECT id, title, category, file_url, description, start_date, end_date, uploaded_at FROM documents ORDER BY uploaded_at DESC');
+      const { parent_folder_id } = req.query;
+      let query = 'SELECT id, title, category, file_url, description, start_date, end_date, parent_folder_id, uploaded_at FROM documents';
+      let params = [];
+      
+      if (parent_folder_id !== undefined) {
+        if (parent_folder_id === null || parent_folder_id === 'null' || parent_folder_id === '') {
+          query += ' WHERE parent_folder_id IS NULL';
+        } else {
+          query += ' WHERE parent_folder_id = ?';
+          params.push(parseInt(parent_folder_id));
+        }
+      }
+      
+      query += ' ORDER BY uploaded_at DESC';
+      
+      const [rows] = await db.query(query, params);
       res.json(rows);
     } catch (error) {
       res.status(500).json({ message: 'Failed to fetch documents', error: error.message });
@@ -246,6 +263,251 @@ const documentController = {
       res.json({ message: 'Category deleted successfully' });
     } catch (error) {
       res.status(500).json({ message: 'Failed to delete category', error: error.message });
+    }
+  },
+
+  // Folder Management Functions
+  getAllFolders: async (req, res) => {
+    try {
+      const { parent_folder_id } = req.query;
+      let query = 'SELECT id, name, parent_folder_id, created_at, updated_at FROM document_folders';
+      let params = [];
+      
+      if (parent_folder_id !== undefined) {
+        if (parent_folder_id === null || parent_folder_id === 'null' || parent_folder_id === '') {
+          query += ' WHERE parent_folder_id IS NULL';
+        } else {
+          query += ' WHERE parent_folder_id = ?';
+          params.push(parseInt(parent_folder_id));
+        }
+      }
+      
+      query += ' ORDER BY name ASC';
+      
+      const [rows] = await db.query(query, params);
+      res.json(rows);
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to fetch folders', error: error.message });
+    }
+  },
+
+  getFolderById: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const [rows] = await db.query(
+        'SELECT id, name, parent_folder_id, created_at, updated_at FROM document_folders WHERE id = ?',
+        [id]
+      );
+      
+      if (rows.length === 0) {
+        return res.status(404).json({ message: 'Folder not found' });
+      }
+      
+      res.json(rows[0]);
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to fetch folder', error: error.message });
+    }
+  },
+
+  createFolder: async (req, res) => {
+    try {
+      const { name, parent_folder_id } = req.body;
+      
+      if (!name || name.trim() === '') {
+        return res.status(400).json({ message: 'Folder name is required' });
+      }
+
+      const parentFolderId = parent_folder_id && parent_folder_id !== '' && parent_folder_id !== 'null' ? parseInt(parent_folder_id) : null;
+      
+      // Check if parent folder exists (if provided)
+      if (parentFolderId) {
+        const [parentFolders] = await db.query(
+          'SELECT id FROM document_folders WHERE id = ?',
+          [parentFolderId]
+        );
+        if (parentFolders.length === 0) {
+          return res.status(404).json({ message: 'Parent folder not found' });
+        }
+      }
+
+      const [result] = await db.query(
+        'INSERT INTO document_folders (name, parent_folder_id) VALUES (?, ?)',
+        [name.trim(), parentFolderId]
+      );
+
+      const [newFolder] = await db.query(
+        'SELECT * FROM document_folders WHERE id = ?',
+        [result.insertId]
+      );
+
+      res.status(201).json(newFolder[0]);
+    } catch (error) {
+      console.error('Error creating folder:', error);
+      if (error.code === 'ER_DUP_ENTRY') {
+        res.status(400).json({ message: 'Folder name already exists in this location' });
+      } else if (error.code === 'ER_NO_SUCH_TABLE') {
+        res.status(500).json({ 
+          message: 'Database table not found. Please run the migration script: server/database/add_folders_support.sql',
+          error: error.message 
+        });
+      } else {
+        res.status(500).json({ 
+          message: 'Failed to create folder', 
+          error: error.message,
+          code: error.code 
+        });
+      }
+    }
+  },
+
+  updateFolder: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { name, parent_folder_id } = req.body;
+
+      if (!name || name.trim() === '') {
+        return res.status(400).json({ message: 'Folder name is required' });
+      }
+
+      const parentFolderId = parent_folder_id && parent_folder_id !== '' && parent_folder_id !== 'null' ? parseInt(parent_folder_id) : null;
+      
+      // Prevent moving folder into itself or its descendants
+      if (parentFolderId && parseInt(id) === parentFolderId) {
+        return res.status(400).json({ message: 'Cannot move folder into itself' });
+      }
+
+      // Check if parent folder exists (if provided)
+      if (parentFolderId) {
+        const [parentFolders] = await db.query(
+          'SELECT id FROM document_folders WHERE id = ?',
+          [parentFolderId]
+        );
+        if (parentFolders.length === 0) {
+          return res.status(404).json({ message: 'Parent folder not found' });
+        }
+      }
+
+      const [result] = await db.query(
+        'UPDATE document_folders SET name = ?, parent_folder_id = ?, updated_at = NOW() WHERE id = ?',
+        [name.trim(), parentFolderId, id]
+      );
+
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ message: 'Folder not found' });
+      }
+
+      const [updatedFolder] = await db.query(
+        'SELECT * FROM document_folders WHERE id = ?',
+        [id]
+      );
+
+      res.json(updatedFolder[0]);
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to update folder', error: error.message });
+    }
+  },
+
+  deleteFolder: async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      // Check if folder has subfolders or documents
+      const [subfolders] = await db.query(
+        'SELECT COUNT(*) as count FROM document_folders WHERE parent_folder_id = ?',
+        [id]
+      );
+
+      const [documents] = await db.query(
+        'SELECT COUNT(*) as count FROM documents WHERE parent_folder_id = ?',
+        [id]
+      );
+
+      if (subfolders[0].count > 0 || documents[0].count > 0) {
+        return res.status(400).json({ 
+          message: 'Cannot delete folder that contains subfolders or documents. Please remove them first.' 
+        });
+      }
+
+      const [result] = await db.query(
+        'DELETE FROM document_folders WHERE id = ?',
+        [id]
+      );
+
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ message: 'Folder not found' });
+      }
+
+      res.json({ message: 'Folder deleted successfully' });
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to delete folder', error: error.message });
+    }
+  },
+
+  runFolderMigration: async (req, res) => {
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      
+      // Read the migration SQL file
+      const migrationPath = path.join(__dirname, '..', 'database', 'add_folders_support.sql');
+      const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
+
+      // Split the SQL into individual statements
+      const statements = migrationSQL
+        .split(';')
+        .map(stmt => stmt.trim())
+        .filter(stmt => stmt.length > 0 && !stmt.startsWith('--'));
+
+      const results = [];
+      
+      // Execute each statement
+      for (let i = 0; i < statements.length; i++) {
+        const statement = statements[i];
+        if (statement.trim()) {
+          try {
+            await db.query(statement);
+            results.push({ 
+              statement: i + 1, 
+              status: 'success', 
+              message: 'Executed successfully' 
+            });
+          } catch (error) {
+            // Some errors are expected (like table/column already exists)
+            if (error.code === 'ER_DUP_FIELDNAME' || 
+                error.code === 'ER_DUP_KEYNAME' || 
+                error.code === 'ER_DUP_KEY' ||
+                error.code === 'ER_CANT_DROP_FIELD_OR_KEY' ||
+                error.message.includes('Duplicate column name') ||
+                error.message.includes('already exists')) {
+              results.push({ 
+                statement: i + 1, 
+                status: 'skipped', 
+                message: 'Already exists: ' + error.message 
+              });
+            } else {
+              throw error;
+            }
+          }
+        }
+      }
+
+      // Verify the table was created
+      const [tables] = await db.query("SHOW TABLES LIKE 'document_folders'");
+      const tableExists = tables.length > 0;
+
+      res.json({ 
+        message: 'Migration completed successfully',
+        results,
+        tableExists,
+        statementsExecuted: results.length
+      });
+    } catch (error) {
+      console.error('Migration error:', error);
+      res.status(500).json({ 
+        message: 'Migration failed', 
+        error: error.message,
+        code: error.code 
+      });
     }
   },
 };

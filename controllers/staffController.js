@@ -64,13 +64,88 @@ const staffController = {
 
   getStaffById: async (req, res) => {
     try {
-      const [staff] = await db.query('SELECT * FROM staff WHERE id = ?', [req.params.id]);
+      const staffId = req.params.id;
+      
+      // Get basic staff data with department info
+      const [staff] = await db.query(`
+        SELECT s.*, md.name as department_name, md.description as department_description
+        FROM staff s 
+        LEFT JOIN my_departments md ON s.department_id = md.id 
+        WHERE s.id = ?
+      `, [staffId]);
       
       if (staff.length === 0) {
         return res.status(404).json({ message: 'Staff member not found' });
       }
       
-      res.json(staff[0]);
+      const staffData = {
+        ...staff[0],
+        status: staff[0].is_active ? 1 : 0
+      };
+      
+      // Check which related tables exist
+      const [tables] = await db.query("SHOW TABLES LIKE 'staff_%'");
+      const tableNames = tables.map(t => Object.values(t)[0]);
+      
+      // Fetch related data if tables exist
+      if (tableNames.includes('staff_beneficiaries')) {
+        const [beneficiaries] = await db.query(
+          'SELECT * FROM staff_beneficiaries WHERE staff_id = ? ORDER BY entry_order',
+          [staffId]
+        );
+        staffData.beneficiaries = beneficiaries;
+      }
+      
+      if (tableNames.includes('staff_emergency_contacts')) {
+        const [emergency_contacts] = await db.query(
+          'SELECT * FROM staff_emergency_contacts WHERE staff_id = ? ORDER BY entry_order',
+          [staffId]
+        );
+        staffData.emergency_contacts = emergency_contacts;
+      }
+      
+      if (tableNames.includes('staff_family')) {
+        const [family] = await db.query(
+          'SELECT * FROM staff_family WHERE staff_id = ? ORDER BY entry_order',
+          [staffId]
+        );
+        staffData.family = family;
+      }
+      
+      if (tableNames.includes('staff_education')) {
+        const [education] = await db.query(
+          'SELECT * FROM staff_education WHERE staff_id = ? ORDER BY entry_order',
+          [staffId]
+        );
+        staffData.education = education;
+      }
+      
+      if (tableNames.includes('staff_work_experience')) {
+        const [work_experience] = await db.query(
+          'SELECT * FROM staff_work_experience WHERE staff_id = ? ORDER BY entry_order',
+          [staffId]
+        );
+        staffData.work_experience = work_experience;
+      }
+      
+      if (tableNames.includes('staff_references')) {
+        const [references] = await db.query(
+          'SELECT * FROM staff_references WHERE staff_id = ? ORDER BY entry_order',
+          [staffId]
+        );
+        staffData.references = references;
+      }
+      
+      // Parse benefits JSON if it exists
+      if (staffData.benefits) {
+        try {
+          staffData.benefits = JSON.parse(staffData.benefits);
+        } catch (e) {
+          staffData.benefits = [];
+        }
+      }
+      
+      res.json(staffData);
     } catch (error) {
       console.error('Error fetching staff member:', error);
       res.status(500).json({ message: 'Error fetching staff member' });
@@ -105,13 +180,242 @@ const staffController = {
   },
 
   updateStaff: async (req, res) => {
-    const { name, photo_url, empl_no, id_no, role, designation, phone_number, department, department_id, business_email, department_email, salary, employment_type, gender } = req.body;
+    console.log('=== UPDATE STAFF REQUEST ===');
+    console.log('Staff ID:', req.params.id);
+    console.log('Request Body:', JSON.stringify(req.body, null, 2));
+    
+    const { 
+      name, photo_url, empl_no, id_no, role, designation, phone_number, department, department_id, 
+      business_email, department_email, salary, employment_type, gender,
+      // Additional fields
+      manager_id, offer_date, start_date, date_of_birth, marital_status, nationality, address,
+      nhif_number, nssf_number, kra_pin, passport_number,
+      bank_name, bank_branch, account_number, account_name, swift_code,
+      benefits,
+      // Related data
+      beneficiaries, emergency_contacts, family, education, work_experience, references
+    } = req.body;
+    
+    const staffId = req.params.id;
     
     try {
-      await db.query(
-        'UPDATE staff SET name = ?, photo_url = ?, empl_no = ?, id_no = ?, role = ?, designation = ?, phone_number = ?, department = ?, department_id = ?, business_email = ?, department_email = ?, salary = ?, employment_type = ?, gender = ? WHERE id = ?',
-        [name, photo_url, empl_no, id_no, role, designation, phone_number, department, department_id, business_email, department_email, salary, employment_type, gender, req.params.id]
-      );
+      // Get existing columns to avoid errors if migration hasn't been run
+      const [columns] = await db.query('DESCRIBE staff');
+      const columnNames = columns.map(col => col.Field);
+      
+      // Build dynamic UPDATE query based on existing columns
+      const baseFields = [
+        'name', 'photo_url', 'empl_no', 'id_no', 'role', 'designation',
+        'phone_number', 'department', 'department_id', 'business_email',
+        'department_email', 'salary', 'employment_type', 'gender'
+      ];
+      
+      const additionalFields = [
+        'manager_id', 'offer_date', 'start_date', 'date_of_birth',
+        'marital_status', 'nationality', 'address',
+        'nhif_number', 'nssf_number', 'kra_pin', 'passport_number',
+        'bank_name', 'bank_branch', 'account_number', 'account_name', 'swift_code',
+        'benefits'
+      ];
+      
+      const fieldsToUpdate = [...baseFields];
+      const values = [
+        name || null, 
+        photo_url || null, 
+        empl_no || null, 
+        id_no || null, 
+        role || null, 
+        designation || null,
+        phone_number || null, 
+        department || null, 
+        department_id || null, 
+        business_email || null,
+        department_email || null, 
+        salary || null, 
+        employment_type || null, 
+        gender || null
+      ];
+      
+      // Filter out fields that don't exist in the database
+      const validFields = [];
+      const validValues = [];
+      
+      baseFields.forEach((field, index) => {
+        if (columnNames.includes(field)) {
+          validFields.push(field);
+          validValues.push(values[index]);
+        }
+      });
+      
+      // Add additional fields if columns exist
+      const fieldValueMap = {
+        'manager_id': manager_id || null,
+        'offer_date': offer_date || null,
+        'start_date': start_date || null,
+        'date_of_birth': date_of_birth || null,
+        'marital_status': marital_status || null,
+        'nationality': nationality || null,
+        'address': address || null,
+        'nhif_number': nhif_number || null,
+        'nssf_number': nssf_number || null,
+        'kra_pin': kra_pin || null,
+        'passport_number': passport_number || null,
+        'bank_name': bank_name || null,
+        'bank_branch': bank_branch || null,
+        'account_number': account_number || null,
+        'account_name': account_name || null,
+        'swift_code': swift_code || null,
+        'benefits': benefits ? JSON.stringify(benefits) : null
+      };
+      
+      additionalFields.forEach((field) => {
+        if (columnNames.includes(field)) {
+          validFields.push(field);
+          validValues.push(fieldValueMap[field]);
+        }
+      });
+      
+      validValues.push(staffId);
+      
+      if (validFields.length === 0) {
+        console.error('ERROR: No valid fields to update!');
+        return res.status(400).json({ message: 'No valid fields to update' });
+      }
+      
+      const setClause = validFields.map(field => `${field} = ?`).join(', ');
+      const sqlQuery = `UPDATE staff SET ${setClause} WHERE id = ?`;
+      console.log('SQL Query:', sqlQuery);
+      console.log('Values:', validValues);
+      console.log('Fields to update:', validFields);
+      console.log('Total fields:', validFields.length);
+      
+      const [result] = await db.query(sqlQuery, validValues);
+      console.log('Update result:', result);
+      console.log('Rows affected:', result.affectedRows);
+      console.log('Changed rows:', result.changedRows);
+      
+      if (result.affectedRows === 0) {
+        console.warn('WARNING: No rows were affected by the UPDATE query');
+        // Check if staff exists
+        const [checkStaff] = await db.query('SELECT id FROM staff WHERE id = ?', [staffId]);
+        if (checkStaff.length === 0) {
+          return res.status(404).json({ message: 'Staff member not found' });
+        }
+        return res.status(400).json({ message: 'No changes were made. Values may be the same as existing data.' });
+      }
+      
+      console.log('Staff table updated successfully');
+      console.log(`Updated ${result.affectedRows} row(s), ${result.changedRows} row(s) changed`);
+      
+      // Verify the update by fetching the updated record
+      const [verifyStaff] = await db.query('SELECT * FROM staff WHERE id = ?', [staffId]);
+      console.log('Verified updated staff data:', verifyStaff[0]);
+
+      // Update related tables (only if they exist)
+      const [tables] = await db.query("SHOW TABLES LIKE 'staff_%'");
+      const tableNames = tables.map(t => Object.values(t)[0]);
+      
+      // Update beneficiaries
+      if (beneficiaries && Array.isArray(beneficiaries) && tableNames.includes('staff_beneficiaries')) {
+        try {
+          await db.query('DELETE FROM staff_beneficiaries WHERE staff_id = ?', [staffId]);
+          for (const beneficiary of beneficiaries) {
+            if (beneficiary.name && beneficiary.relationship && beneficiary.contact) {
+              await db.query(
+                'INSERT INTO staff_beneficiaries (staff_id, name, relationship, contact, entry_order) VALUES (?, ?, ?, ?, ?)',
+                [staffId, beneficiary.name, beneficiary.relationship, beneficiary.contact, beneficiary.entry_order || 1]
+              );
+            }
+          }
+        } catch (err) {
+          console.error('Error updating beneficiaries:', err);
+        }
+      }
+
+      // Update emergency contacts
+      if (emergency_contacts && Array.isArray(emergency_contacts) && tableNames.includes('staff_emergency_contacts')) {
+        try {
+          await db.query('DELETE FROM staff_emergency_contacts WHERE staff_id = ?', [staffId]);
+          for (const contact of emergency_contacts) {
+            if (contact.name && contact.relationship && contact.contact) {
+              await db.query(
+                'INSERT INTO staff_emergency_contacts (staff_id, name, relationship, contact, entry_order) VALUES (?, ?, ?, ?, ?)',
+                [staffId, contact.name, contact.relationship, contact.contact, contact.entry_order || 1]
+              );
+            }
+          }
+        } catch (err) {
+          console.error('Error updating emergency contacts:', err);
+        }
+      }
+
+      // Update family
+      if (family && Array.isArray(family) && tableNames.includes('staff_family')) {
+        try {
+          await db.query('DELETE FROM staff_family WHERE staff_id = ?', [staffId]);
+          for (const member of family) {
+            if (member.name && member.relationship && member.contact) {
+              await db.query(
+                'INSERT INTO staff_family (staff_id, name, relationship, contact, entry_order) VALUES (?, ?, ?, ?, ?)',
+                [staffId, member.name, member.relationship, member.contact, member.entry_order || 1]
+              );
+            }
+          }
+        } catch (err) {
+          console.error('Error updating family:', err);
+        }
+      }
+
+      // Update education
+      if (education && Array.isArray(education) && tableNames.includes('staff_education')) {
+        try {
+          await db.query('DELETE FROM staff_education WHERE staff_id = ?', [staffId]);
+          for (const edu of education) {
+            if (edu.institution && edu.qualification) {
+              await db.query(
+                'INSERT INTO staff_education (staff_id, institution, qualification, year_of_completion, entry_order) VALUES (?, ?, ?, ?, ?)',
+                [staffId, edu.institution, edu.qualification, edu.year_of_completion || null, edu.entry_order || 1]
+              );
+            }
+          }
+        } catch (err) {
+          console.error('Error updating education:', err);
+        }
+      }
+
+      // Update work experience
+      if (work_experience && Array.isArray(work_experience) && tableNames.includes('staff_work_experience')) {
+        try {
+          await db.query('DELETE FROM staff_work_experience WHERE staff_id = ?', [staffId]);
+          for (const exp of work_experience) {
+            if (exp.organization && exp.designation) {
+              await db.query(
+                'INSERT INTO staff_work_experience (staff_id, organization, designation, from_date, to_date, reason_for_leaving, entry_order) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                [staffId, exp.organization, exp.designation, exp.from_date || null, exp.to_date || null, exp.reason_for_leaving || null, exp.entry_order || 1]
+              );
+            }
+          }
+        } catch (err) {
+          console.error('Error updating work experience:', err);
+        }
+      }
+
+      // Update references
+      if (references && Array.isArray(references) && tableNames.includes('staff_references')) {
+        try {
+          await db.query('DELETE FROM staff_references WHERE staff_id = ?', [staffId]);
+          for (const ref of references) {
+            if (ref.name) {
+              await db.query(
+                'INSERT INTO staff_references (staff_id, name, position, company, phone, email, entry_order) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                [staffId, ref.name, ref.position || null, ref.company || null, ref.phone || null, ref.email || null, ref.entry_order || 1]
+              );
+            }
+          }
+        } catch (err) {
+          console.error('Error updating references:', err);
+        }
+      }
       
       // Get the updated staff with department info
       const [updatedStaff] = await db.query(`
@@ -119,15 +423,26 @@ const staffController = {
         FROM staff s 
         LEFT JOIN my_departments md ON s.department_id = md.id 
         WHERE s.id = ?
-      `, [req.params.id]);
+      `, [staffId]);
       
-      res.json({
+      const updatedStaffData = {
         ...updatedStaff[0],
         status: updatedStaff[0].is_active ? 1 : 0
-      });
+      };
+      
+      console.log('=== UPDATE STAFF SUCCESS ===');
+      console.log('Updated staff:', updatedStaffData);
+      
+      res.json(updatedStaffData);
     } catch (error) {
+      console.error('=== UPDATE STAFF ERROR ===');
       console.error('Error updating staff member:', error);
-      res.status(500).json({ message: 'Error updating staff member' });
+      console.error('Error stack:', error.stack);
+      res.status(500).json({ 
+        message: 'Error updating staff member', 
+        error: error.message,
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      });
     }
   },
 
@@ -310,7 +625,7 @@ const staffController = {
     }
     
     const { originalname, buffer, mimetype } = req.file;
-    const { start_date, end_date, renewed_from } = req.body;
+    const { start_date, end_date, renewed_from, description } = req.body;
     
     console.log('File details:', { originalname, mimetype });
     console.log('Form data:', { start_date, end_date, renewed_from });
@@ -375,8 +690,8 @@ const staffController = {
       
       console.log('Saving to database...');
       const [dbResult] = await db.query(
-        'INSERT INTO employee_contracts (staff_id, file_name, file_url, start_date, end_date, renewed_from) VALUES (?, ?, ?, ?, ?, ?)',
-        [staffId, originalname, fileUrl, start_date, end_date, renewed_from || null]
+        'INSERT INTO employee_contracts (staff_id, file_name, file_url, start_date, end_date, renewed_from, description) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [staffId, originalname, fileUrl, start_date, end_date, renewed_from || null, description || null]
       );
       console.log('Database insert successful:', dbResult);
       
@@ -925,6 +1240,42 @@ const staffController = {
         FROM leave_requests
         WHERE status = 'approved' AND start_date <= ? AND end_date >= ?
       `, [endDate, startDate]);
+      // Get Kenya public holidays for the month from public_holidays table
+      let holidayCount = 0;
+      try {
+        const [holidays] = await db.query(`
+          SELECT DISTINCT date, name
+          FROM public_holidays
+          WHERE date >= ? AND date <= ?
+          AND country = 'Kenya'
+        `, [startDate, endDate]);
+        
+        console.log(`[Kenya Holidays] Found ${holidays.length} public holidays for ${month}`);
+        
+        // Count holidays that fall on working days (non-Sundays)
+        for (const holiday of holidays) {
+          let dateStr;
+          if (holiday.date instanceof Date) {
+            dateStr = holiday.date.toISOString().slice(0, 10);
+          } else {
+            // MySQL DATE is returned as string 'YYYY-MM-DD'
+            dateStr = String(holiday.date).slice(0, 10);
+          }
+          
+          const dateObj = new Date(dateStr + 'T00:00:00'); // Add time to avoid timezone issues
+          const dayOfWeek = dateObj.getDay();
+          
+          // Count all holidays (including those that fall on Sundays as they're still public holidays)
+          holidayCount++;
+          console.log(`[Kenya Holidays] ${dateStr} (${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dayOfWeek]}) - ${holiday.name}`);
+        }
+        
+        console.log(`[Kenya Holidays] Total public holidays for ${month}: ${holidayCount}`);
+      } catch (err) {
+        console.error('Error fetching Kenya public holidays:', err);
+        console.error('This might mean the public_holidays table does not exist. Please run: server/database/create_public_holidays_table.sql');
+        // Continue with holidayCount = 0 if there's an error
+      }
       // For each staff, calculate days present, leave, absent
       const results = staff.map(emp => {
         // Build set of all working days in month (exclude Sundays)
@@ -972,6 +1323,7 @@ const staffController = {
           days_present: presentDays.size,
           leave_days: leaveDays,
           absent_days: absentDays < 0 ? 0 : absentDays,
+          holidays: holidayCount,
           attendance_pct,
         };
       });

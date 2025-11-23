@@ -18,7 +18,7 @@ process.env.TZ = 'UTC';
 process.env.NODE_TZ = 'UTC';
 
 // Try to require database and other modules, but don't crash if they fail
-let db, staffController, roleController, multer, upload, uploadController, teamController, clientController, branchController, serviceChargeController, journeyPlanController, payrollRoutes, financialRoutes, staffRoutes, chatRoutes, clientRoutes, salesRoutes, managerRoutes, noticeRoutes, salesRepLeaveRoutes, calendarTaskRoutes, userRoutes, loginHistoryRoutes, journeyPlanRoutes, riderRoutes, myVisibilityReportRoutes, feedbackReportRoutes, availabilityReportRoutes, leaveRequestRoutes, supplierRoutes, receiptRoutes, myAssetsRoutes, faultyProductsRoutes, storeRoutes, routesRoutes, upliftSaleRoutes, dashboardRoutes, customerOrdersRoutes, categoryRoutes, assetPurchaseOrderRoutes;
+let db, staffController, roleController, multer, upload, uploadController, teamController, clientController, branchController, serviceChargeController, journeyPlanController, payrollRoutes, financialRoutes, staffRoutes, chatRoutes, clientRoutes, salesRoutes, managerRoutes, noticeRoutes, salesRepLeaveRoutes, calendarTaskRoutes, userRoutes, loginHistoryRoutes, journeyPlanRoutes, riderRoutes, myVisibilityReportRoutes, feedbackReportRoutes, availabilityReportRoutes, leaveRequestRoutes, supplierRoutes, receiptRoutes, myAssetsRoutes, faultyProductsRoutes, storeRoutes, routesRoutes, upliftSaleRoutes, dashboardRoutes, customerOrdersRoutes, categoryRoutes, assetPurchaseOrderRoutes, departmentExpenseRoutes;
 
 try {
   db = require('./database/db');
@@ -66,6 +66,7 @@ try {
   customerOrdersRoutes = require('./routes/customerOrdersRoutes');
   categoryRoutes = require('./routes/categoryRoutes');
   assetPurchaseOrderRoutes = require('./routes/assetPurchaseOrderRoutes');
+  departmentExpenseRoutes = require('./routes/departmentExpenseRoutes');
 } catch (error) {
   console.log('Some modules failed to load:', error.message);
 }
@@ -151,13 +152,24 @@ app.use('/uploads/warning_letters', express.static(path.join(__dirname, 'uploads
 app.use('/uploads/products', express.static(path.join(__dirname, 'uploads', 'products')));
 
 // Register all specific endpoints FIRST
-app.use('/api/my-visibility-reports', myVisibilityReportRoutes);
-app.use('/api/feedback-reports', feedbackReportRoutes);
-app.use('/api/availability-reports', availabilityReportRoutes);
-app.use('/api/leave-requests', leaveRequestRoutes);
+if (myVisibilityReportRoutes) {
+  app.use('/api/my-visibility-reports', myVisibilityReportRoutes);
+}
+if (feedbackReportRoutes) {
+  app.use('/api/feedback-reports', feedbackReportRoutes);
+}
+if (availabilityReportRoutes) {
+  app.use('/api/availability-reports', availabilityReportRoutes);
+}
+if (leaveRequestRoutes) {
+  app.use('/api/leave-requests', leaveRequestRoutes);
+}
 if (categoryRoutes) {
   app.use('/api/categories', categoryRoutes);
   console.log('Category routes registered successfully');
+}
+if (departmentExpenseRoutes) {
+  app.use('/api/department-expenses', departmentExpenseRoutes);
 }
 
 // Helper function to map database fields to frontend fields

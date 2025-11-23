@@ -26,5 +26,7 @@ router.get('/latest', chatController.getLatestForUser);
 router.patch('/messages/:id', chatController.editMessage);
 // Delete a message
 router.delete('/messages/:id', chatController.deleteMessage);
+// Delete a room (group chat only)
+router.delete('/rooms/:roomId', chatController.deleteRoom);
 
 module.exports = router; 

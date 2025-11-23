@@ -190,6 +190,53 @@ const chatController = {
       console.error('Get room members error:', error);
       res.status(500).json({ success: false, message: 'Failed to fetch room members', error: error.message });
     }
+  },
+
+  // Delete a chat room (only for groups, only by creator or HR/executive)
+  deleteRoom: async (req, res) => {
+    const { roomId } = req.params;
+    const userId = req.user.userId || req.user.id;
+    const userRole = req.user.role;
+    
+    try {
+      // Get room details
+      const [[room]] = await db.query(
+        'SELECT * FROM chat_rooms WHERE id = ?',
+        [roomId]
+      );
+      
+      if (!room) {
+        return res.status(404).json({ success: false, message: 'Room not found' });
+      }
+
+      // Only allow deletion of group chats
+      if (!room.is_group) {
+        return res.status(403).json({ success: false, message: 'Only group chats can be deleted' });
+      }
+
+      // Check permissions: creator or HR/executive role
+      const isCreator = room.created_by === userId;
+      const isAuthorizedRole = userRole === 'hr' || userRole === 'executive';
+      
+      if (!isCreator && !isAuthorizedRole) {
+        return res.status(403).json({ success: false, message: 'You do not have permission to delete this group' });
+      }
+
+      // Delete all messages in the room
+      await db.query('DELETE FROM chat_messages WHERE room_id = ?', [roomId]);
+      
+      // Delete all room members
+      await db.query('DELETE FROM chat_room_members WHERE room_id = ?', [roomId]);
+      
+      // Delete the room
+      await db.query('DELETE FROM chat_rooms WHERE id = ?', [roomId]);
+      
+      console.log(`✅ Chat room ${roomId} deleted by user ${userId}`);
+      res.json({ success: true, message: 'Room deleted successfully', room_id: parseInt(roomId) });
+    } catch (error) {
+      console.error('Delete room error:', error);
+      res.status(500).json({ success: false, message: 'Failed to delete room', error: error.message });
+    }
   }
 };
 

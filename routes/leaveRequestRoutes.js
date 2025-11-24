@@ -12,6 +12,18 @@ router.get('/', leaveRequestController.getAllLeaveRequests);
 // GET /api/leave-requests/employee-leaves
 router.get('/employee-leaves', leaveRequestController.getEmployeeLeaves);
 
+// GET /api/leave-requests/report
+router.get('/report', leaveRequestController.getLeaveReport);
+
+// GET /api/leave-requests/maternal-leave-report
+router.get('/maternal-leave-report', leaveRequestController.getMaternalLeaveReport);
+
+// GET /api/leave-requests/sick-leave-report
+router.get('/sick-leave-report', leaveRequestController.getSickLeaveReport);
+
+// GET /api/leave-requests/compassionate-leave-report
+router.get('/compassionate-leave-report', leaveRequestController.getCompassionateLeaveReport);
+
 // PATCH /api/leave-requests/:id/status
 router.patch('/:id/status', leaveRequestController.updateLeaveRequestStatus);
 

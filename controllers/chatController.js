@@ -131,11 +131,22 @@ const chatController = {
     const userId = req.user.userId;
     try {
       const [rooms] = await db.query(
-        `SELECT r.* FROM chat_rooms r
+        `SELECT r.*, 
+         CASE 
+           WHEN r.is_group = 0 THEN (
+             SELECT s.name 
+             FROM chat_room_members crm
+             JOIN staff s ON crm.staff_id = s.id
+             WHERE crm.room_id = r.id AND crm.staff_id != ?
+             LIMIT 1
+           )
+           ELSE NULL
+         END as other_member_name
+         FROM chat_rooms r
          JOIN chat_room_members m ON r.id = m.room_id
          WHERE m.staff_id = ?
          ORDER BY r.created_at DESC`,
-        [userId]
+        [userId, userId]
       );
       res.json(rooms);
     } catch (error) {

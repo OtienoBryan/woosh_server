@@ -24,6 +24,9 @@ router.get('/sick-leave-report', leaveRequestController.getSickLeaveReport);
 // GET /api/leave-requests/compassionate-leave-report
 router.get('/compassionate-leave-report', leaveRequestController.getCompassionateLeaveReport);
 
+// GET /api/leave-requests/paternal-leave-report
+router.get('/paternal-leave-report', leaveRequestController.getPaternalLeaveReport);
+
 // PATCH /api/leave-requests/:id/status
 router.patch('/:id/status', leaveRequestController.updateLeaveRequestStatus);
 

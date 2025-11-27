@@ -125,12 +125,14 @@ const getCustomerOrdersData = async (req, res) => {
         c.name as customer_name,
         c.contact as customer_contact,
         c.balance as customer_balance,
-        u.full_name as salesrep,
+        sr.name as salesrep,
+        u.full_name as created_by_name,
         u.email as salesrep_email,
         r.name as rider_name,
         r.contact as rider_contact
       FROM sales_orders so
       LEFT JOIN Clients c ON so.client_id = c.id
+      LEFT JOIN SalesRep sr ON so.sales_rep_id = sr.id
       LEFT JOIN users u ON so.created_by = u.id
       LEFT JOIN Riders r ON so.rider_id = r.id
       ${whereClause}

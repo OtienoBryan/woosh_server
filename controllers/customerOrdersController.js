@@ -32,9 +32,14 @@ const getCustomerOrdersData = async (req, res) => {
     let whereConditions = [];
     let queryParams = [];
     
-    if (status && status !== 'all') {
+    // Handle status filter - explicitly check for '0' as it's a valid status
+    if (status !== undefined && status !== null && status !== 'all' && status !== '') {
       whereConditions.push('so.my_status = ?');
-      queryParams.push(parseInt(status));
+      const statusNum = parseInt(status);
+      if (isNaN(statusNum)) {
+        throw new Error(`Invalid status value: ${status}`);
+      }
+      queryParams.push(statusNum);
     }
     
     if (rider_id) {
@@ -63,44 +68,72 @@ const getCustomerOrdersData = async (req, res) => {
       : '';
     
     // Execute all independent queries in parallel for better performance
-    const [
-      countResult,
-      ridersResult,
-      storesResult,
-      statusCountsResult,
-      totalCountResult
-    ] = await Promise.all([
-      // Get total count for pagination (only for filtered results)
-      db.query(`
-        SELECT COUNT(DISTINCT so.id) as total
-        FROM sales_orders so
-        LEFT JOIN Clients c ON so.client_id = c.id
-        ${whereClause}
-      `, queryParams),
+    let countResult, ridersResult, storesResult, statusCountsResult, totalCountResult;
+    
+    try {
+      [
+        countResult,
+        ridersResult,
+        storesResult,
+        statusCountsResult,
+        totalCountResult
+      ] = await Promise.all([
+        // Get total count for pagination (only for filtered results)
+        db.query(`
+          SELECT COUNT(DISTINCT so.id) as total
+          FROM sales_orders so
+          LEFT JOIN Clients c ON so.client_id = c.id
+          ${whereClause}
+        `, queryParams),
+        
+        // Get riders
+        db.query('SELECT id, name, contact, status FROM Riders WHERE status = 1 ORDER BY name ASC'),
+        
+        // Get stores
+        db.query('SELECT id, store_name, store_code FROM stores WHERE status = 1 ORDER BY store_name ASC'),
+        
+        // Count orders by status for filter badges
+        db.query(`
+          SELECT 
+            my_status,
+            COUNT(*) as count
+          FROM sales_orders
+          GROUP BY my_status
+        `),
+        
+        // Get total count for 'all' status
+        db.query('SELECT COUNT(*) as total FROM sales_orders')
+      ]);
+    } catch (queryError) {
+      console.error('Error in parallel queries:', queryError);
+      console.error('Query params:', queryParams);
+      console.error('Where clause:', whereClause);
+      console.error('SQL Error Code:', queryError.code);
+      console.error('SQL Error SQL State:', queryError.sqlState);
       
-      // Get riders
-      db.query('SELECT id, name, contact, status FROM Riders WHERE status = 1 ORDER BY name ASC'),
+      // Check if it's a column or table not found error
+      if (queryError.code === 'ER_BAD_FIELD_ERROR' || queryError.message?.includes('Unknown column')) {
+        throw new Error(`Database column error: ${queryError.message}. Please check that all required columns exist in the database tables.`);
+      }
+      if (queryError.code === 'ER_NO_SUCH_TABLE' || queryError.message?.includes("doesn't exist")) {
+        throw new Error(`Database table error: ${queryError.message}. Please ensure all required tables exist.`);
+      }
       
-      // Get stores
-      db.query('SELECT id, store_name, store_code FROM stores WHERE status = 1 ORDER BY store_name ASC'),
-      
-      // Count orders by status for filter badges
-      db.query(`
-        SELECT 
-          my_status,
-          COUNT(*) as count
-        FROM sales_orders
-        GROUP BY my_status
-      `),
-      
-      // Get total count for 'all' status
-      db.query('SELECT COUNT(*) as total FROM sales_orders')
-    ]);
+      throw new Error(`Database query failed: ${queryError.message}`);
+    }
+    
+    // Validate query results
+    if (!countResult || !countResult[0] || !countResult[0][0]) {
+      throw new Error('Invalid count result structure');
+    }
+    if (!totalCountResult || !totalCountResult[0] || !totalCountResult[0][0]) {
+      throw new Error('Invalid total count result structure');
+    }
     
     const totalOrders = countResult[0][0].total;
-    const riders = ridersResult[0];
-    const stores = storesResult[0];
-    const statusCounts = statusCountsResult[0];
+    const riders = ridersResult[0] || [];
+    const stores = storesResult[0] || [];
+    const statusCounts = statusCountsResult[0] || [];
     const totalCount = totalCountResult[0][0].total;
     
     // Main query - optimized to fetch only needed fields and avoid subquery in SELECT
@@ -132,7 +165,7 @@ const getCustomerOrdersData = async (req, res) => {
         r.contact as rider_contact
       FROM sales_orders so
       LEFT JOIN Clients c ON so.client_id = c.id
-      LEFT JOIN SalesRep sr ON so.sales_rep_id = sr.id
+      LEFT JOIN SalesRep sr ON so.salesrep = sr.id
       LEFT JOIN users u ON so.created_by = u.id
       LEFT JOIN Riders r ON so.rider_id = r.id
       ${whereClause}
@@ -141,64 +174,98 @@ const getCustomerOrdersData = async (req, res) => {
     `;
     
     const paginationParams = [...queryParams, limitNum, offset];
-    const [orders] = await db.query(ordersQuery, paginationParams);
+    let orders;
+    try {
+      [orders] = await db.query(ordersQuery, paginationParams);
+      if (!Array.isArray(orders)) {
+        orders = [];
+      }
+    } catch (queryError) {
+      console.error('Error in main orders query:', queryError);
+      console.error('Orders query:', ordersQuery);
+      console.error('Pagination params:', paginationParams);
+      console.error('SQL Error Code:', queryError.code);
+      console.error('SQL Error SQL State:', queryError.sqlState);
+      
+      // Check if it's a column not found error
+      if (queryError.code === 'ER_BAD_FIELD_ERROR' || queryError.message?.includes('Unknown column')) {
+        throw new Error(`Database column error: ${queryError.message}. Please ensure the sales_rep_id column exists in the sales_orders table. Run the migration script: server/add-sales-rep-to-orders.sql`);
+      }
+      
+      throw new Error(`Failed to fetch orders: ${queryError.message}`);
+    }
     
     // Batch fetch items for all orders in one query (much faster than subquery per order)
     let ordersWithItems = orders;
-    if (orders.length > 0) {
-      const orderIds = orders.map(o => o.id);
-      const placeholders = orderIds.map(() => '?').join(',');
-      
-      const [itemsResult] = await db.query(`
-        SELECT 
-          soi.sales_order_id,
-          soi.id,
-          soi.product_id,
-          p.product_name,
-          soi.quantity,
-          soi.unit_price,
-          soi.tax_type,
-          soi.tax_amount,
-          soi.total_price
-        FROM sales_order_items soi
-        LEFT JOIN products p ON soi.product_id = p.id
-        WHERE soi.sales_order_id IN (${placeholders})
-        ORDER BY soi.sales_order_id, soi.id
-      `, orderIds);
-      
-      // Group items by order_id
-      const itemsByOrderId = {};
-      itemsResult.forEach(item => {
-        if (!itemsByOrderId[item.sales_order_id]) {
-          itemsByOrderId[item.sales_order_id] = [];
+    if (orders && orders.length > 0) {
+      const orderIds = orders.map(o => o.id).filter(id => id != null);
+      if (orderIds.length > 0) {
+        const placeholders = orderIds.map(() => '?').join(',');
+        
+        let itemsResult;
+        try {
+          [itemsResult] = await db.query(`
+            SELECT 
+              soi.sales_order_id,
+              soi.id,
+              soi.product_id,
+              p.product_name,
+              soi.quantity,
+              soi.unit_price,
+              soi.tax_type,
+              soi.tax_amount,
+              soi.total_price
+            FROM sales_order_items soi
+            LEFT JOIN products p ON soi.product_id = p.id
+            WHERE soi.sales_order_id IN (${placeholders})
+            ORDER BY soi.sales_order_id, soi.id
+          `, orderIds);
+        } catch (itemsError) {
+          console.error('Error fetching order items:', itemsError);
+          // Continue without items rather than failing completely
+          itemsResult = [];
         }
-        itemsByOrderId[item.sales_order_id].push({
-          id: item.id,
-          product_id: item.product_id,
-          product_name: item.product_name,
-          quantity: item.quantity,
-          unit_price: item.unit_price,
-          tax_type: item.tax_type,
-          tax_amount: item.tax_amount,
-          total_price: item.total_price
-        });
-      });
       
-      // Attach items to orders
-      ordersWithItems = orders.map(order => ({
-        ...order,
-        items: itemsByOrderId[order.id] || []
-      }));
+        // Group items by order_id
+        const itemsByOrderId = {};
+        if (itemsResult && Array.isArray(itemsResult)) {
+          itemsResult.forEach(item => {
+            if (!itemsByOrderId[item.sales_order_id]) {
+              itemsByOrderId[item.sales_order_id] = [];
+            }
+            itemsByOrderId[item.sales_order_id].push({
+              id: item.id,
+              product_id: item.product_id,
+              product_name: item.product_name,
+              quantity: item.quantity,
+              unit_price: item.unit_price,
+              tax_type: item.tax_type,
+              tax_amount: item.tax_amount,
+              total_price: item.total_price
+            });
+          });
+        }
+        
+        // Attach items to orders
+        ordersWithItems = orders.map(order => ({
+          ...order,
+          items: itemsByOrderId[order.id] || []
+        }));
+      }
     }
     
     // Format status counts
     const formattedStatusCounts = {
-      all: totalCount
+      all: totalCount || 0
     };
     
-    statusCounts.forEach(sc => {
-      formattedStatusCounts[sc.my_status] = sc.count;
-    });
+    if (statusCounts && Array.isArray(statusCounts)) {
+      statusCounts.forEach(sc => {
+        if (sc && sc.my_status != null) {
+          formattedStatusCounts[sc.my_status] = sc.count || 0;
+        }
+      });
+    }
     
     res.json({
       success: true,
@@ -218,10 +285,13 @@ const getCustomerOrdersData = async (req, res) => {
     
   } catch (error) {
     console.error('Error fetching customer orders data:', error);
+    console.error('Error stack:', error.stack);
+    console.error('Request query params:', req.query);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch customer orders data',
-      details: error.message
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 };

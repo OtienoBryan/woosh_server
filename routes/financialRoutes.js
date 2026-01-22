@@ -352,6 +352,7 @@ router.get('/credit-notes/:id', authenticateToken, creditNoteController.getCredi
 router.post('/credit-notes', authenticateToken, creditNoteController.createCreditNote);
 router.post('/credit-notes/receive-back', authenticateToken, creditNoteController.receiveBackToStock);
 router.get('/customers/:customerId/invoices-for-credit', authenticateToken, creditNoteController.getCustomerInvoices);
+router.get('/invoices/:invoiceId/items-with-credited', authenticateToken, creditNoteController.getInvoiceItemsWithCreditedQuantities);
 router.get('/customers/:customerId/credit-notes', authenticateToken, creditNoteController.getCustomerCreditNotes);
 
 module.exports = router; 

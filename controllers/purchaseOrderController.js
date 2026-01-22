@@ -23,7 +23,7 @@ const purchaseOrderController = {
             s.supplier_code as supplier_code,
             s.address as supplier_address,
             s.tax_id as supplier_tax_id,
-            u.full_name as created_by_name,
+            COALESCE(u.full_name, u.name, u.username, 'Unknown') as created_by_name,
             (
               SELECT COALESCE(SUM(amount), 0)
               FROM payments
@@ -40,23 +40,44 @@ const purchaseOrderController = {
         // Fallback for legacy schemas without payments.purchase_order_id or payments.status
         console.warn('Falling back to legacy PO query (no payments join):', err?.message);
         const fallbackHaving = (outstanding && (outstanding === 'true' || outstanding === '1')) ? 'HAVING (po.total_amount) > 0' : '';
-        [rows] = await db.query(`
-          SELECT 
-            po.*,
-            s.company_name as supplier_name,
-            s.supplier_code as supplier_code,
-            s.address as supplier_address,
-            s.tax_id as supplier_tax_id,
-            u.full_name as created_by_name
-          FROM purchase_orders po
-          LEFT JOIN suppliers s ON po.supplier_id = s.id
-          LEFT JOIN users u ON po.created_by = u.id
-          ${whereSql}
-          ${fallbackHaving}
-          ORDER BY po.created_at DESC
-        `, params);
-        // Mark amount_paid = 0 in fallback
-        rows = rows.map(r => ({ ...r, amount_paid: 0 }));
+        try {
+          [rows] = await db.query(`
+            SELECT 
+              po.*,
+              s.company_name as supplier_name,
+              s.supplier_code as supplier_code,
+              s.address as supplier_address,
+              s.tax_id as supplier_tax_id,
+              COALESCE(u.full_name, u.name, u.username, 'Unknown') as created_by_name
+            FROM purchase_orders po
+            LEFT JOIN suppliers s ON po.supplier_id = s.id
+            LEFT JOIN users u ON po.created_by = u.id
+            ${whereSql}
+            ${fallbackHaving}
+            ORDER BY po.created_at DESC
+          `, params);
+          // Mark amount_paid = 0 in fallback
+          rows = rows.map(r => ({ ...r, amount_paid: 0 }));
+        } catch (fallbackErr) {
+          // Final fallback - query without users join if users table doesn't exist or has issues
+          console.warn('Falling back to minimal PO query (no users join):', fallbackErr?.message);
+          [rows] = await db.query(`
+            SELECT 
+              po.*,
+              s.company_name as supplier_name,
+              s.supplier_code as supplier_code,
+              s.address as supplier_address,
+              s.tax_id as supplier_tax_id,
+              'Unknown' as created_by_name
+            FROM purchase_orders po
+            LEFT JOIN suppliers s ON po.supplier_id = s.id
+            ${whereSql}
+            ${fallbackHaving}
+            ORDER BY po.created_at DESC
+          `, params);
+          // Mark amount_paid = 0 in final fallback
+          rows = rows.map(r => ({ ...r, amount_paid: 0 }));
+        }
       }
 
       // Add balance_remaining field
@@ -70,7 +91,13 @@ const purchaseOrderController = {
       res.json({ success: true, data });
     } catch (error) {
       console.error('Error fetching purchase orders:', error);
-      res.status(500).json({ success: false, error: 'Failed to fetch purchase orders' });
+      console.error('Error stack:', error.stack);
+      console.error('Error message:', error.message);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to fetch purchase orders',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
     }
   },
 
@@ -485,6 +512,14 @@ const purchaseOrderController = {
         WHERE purchase_order_id = ?
       `, [purchaseOrderId]);
 
+      console.log('========================================');
+      console.log('📦 RECEIVING ITEMS - JOURNAL ENTRY CALCULATION');
+      console.log('========================================');
+      console.log('PO ID:', purchaseOrderId);
+      console.log('PO Number:', purchaseOrders[0].po_number);
+      console.log('Items being received:', JSON.stringify(items, null, 2));
+      console.log('PO Items from database:', JSON.stringify(poItems, null, 2));
+
       let totalReceiptValue = 0; // Tax-exclusive amount
       let totalTaxAmount = 0;
       
@@ -511,6 +546,14 @@ const purchaseOrderController = {
           // Calculate tax amount
           const itemTaxAmount = itemTaxInclusiveAmount - itemTaxExclusiveAmount;
           
+          console.log(`\n--- Product ID: ${receivedItem.product_id} ---`);
+          console.log(`Received Quantity: ${receivedQty}`);
+          console.log(`PO Unit Price (tax-inclusive): ${poUnitPrice.toFixed(2)}`);
+          console.log(`Tax Type: ${taxType}, Tax Rate: ${(taxRate * 100).toFixed(0)}%`);
+          console.log(`Item Tax-Inclusive Amount: ${itemTaxInclusiveAmount.toFixed(2)}`);
+          console.log(`Item Tax-Exclusive Amount: ${itemTaxExclusiveAmount.toFixed(2)}`);
+          console.log(`Item Tax Amount: ${itemTaxAmount.toFixed(2)}`);
+          
           // Accumulate totals using PO's original pricing (ensures accuracy)
           totalReceiptValue += itemTaxExclusiveAmount;
           totalTaxAmount += itemTaxAmount;
@@ -519,6 +562,12 @@ const purchaseOrderController = {
 
       // Total amount including tax for accounts payable and supplier ledger
       const totalAmountWithTax = totalReceiptValue + totalTaxAmount;
+      
+      console.log('\n========= JOURNAL ENTRY TOTALS =========');
+      console.log(`Total Tax-Exclusive (Inventory Debit): ${totalReceiptValue.toFixed(2)}`);
+      console.log(`Total Tax Amount (Tax Control Debit): ${totalTaxAmount.toFixed(2)}`);
+      console.log(`Total With Tax (Accounts Payable Credit): ${totalAmountWithTax.toFixed(2)}`);
+      console.log('========================================\n');
 
       // Get supplier_id from purchase order
       const supplier_id = purchaseOrders[0].supplier_id;
@@ -573,6 +622,15 @@ const purchaseOrderController = {
       const vatAccountId = 16;
 
       if (inventoryAccount.length && apAccount.length) {
+        console.log('\n💾 INSERTING JOURNAL ENTRY INTO DATABASE...');
+        console.log('Inventory Account ID:', inventoryAccount[0].id);
+        console.log('AP Account ID:', apAccount[0].id);
+        console.log('VAT Account ID:', vatAccountId);
+        
+        console.log('\n📝 Journal Entry Header Values:');
+        console.log(`  total_debit: ${totalAmountWithTax}`);
+        console.log(`  total_credit: ${totalAmountWithTax}`);
+        
         // Create journal entry with total including tax
         const [journalResult] = await connection.query(
           `INSERT INTO journal_entries (entry_number, entry_date, reference, description, total_debit, total_credit, status, created_by)
@@ -587,6 +645,10 @@ const purchaseOrderController = {
           ]
         );
         const journalEntryId = journalResult.insertId;
+        console.log(`✅ Journal Entry Created with ID: ${journalEntryId}`);
+        
+        console.log('\n📝 Journal Entry Lines:');
+        console.log(`  1. Debit Inventory (${inventoryAccount[0].id}): ${totalReceiptValue.toFixed(2)}`);
         
         // Debit Inventory (tax-exclusive amount)
         await connection.query(
@@ -597,6 +659,7 @@ const purchaseOrderController = {
         
         // Debit Purchase Tax Control (tax amount) if there's tax
         if (totalTaxAmount > 0) {
+          console.log(`  2. Debit Purchase Tax Control (${vatAccountId}): ${totalTaxAmount.toFixed(2)}`);
           await connection.query(
             `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
              VALUES (?, ?, ?, 0, ?)`,
@@ -604,13 +667,34 @@ const purchaseOrderController = {
           );
         }
         
+        console.log(`  3. Credit Accounts Payable (${apAccount[0].id}): ${totalAmountWithTax.toFixed(2)}`);
+        
         // Credit Accounts Payable (total with tax)
         await connection.query(
           `INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_amount, credit_amount, description)
            VALUES (?, ?, 0, ?, ?)`,
           [journalEntryId, apAccount[0].id, totalAmountWithTax, `Accounts Payable - Goods received for PO ${po_number}`]
         );
-
+        
+        console.log('✅ All journal entry lines inserted successfully!');
+        
+        // Verify what was actually inserted
+        const [insertedLines] = await connection.query(
+          `SELECT account_id, debit_amount, credit_amount, description 
+           FROM journal_entry_lines 
+           WHERE journal_entry_id = ?
+           ORDER BY id`,
+          [journalEntryId]
+        );
+        console.log('\n🔍 VERIFICATION - What was actually inserted in database:');
+        insertedLines.forEach((line, idx) => {
+          console.log(`  Line ${idx + 1}: Account ${line.account_id}`);
+          console.log(`    Debit: ${parseFloat(line.debit_amount).toFixed(2)}`);
+          console.log(`    Credit: ${parseFloat(line.credit_amount).toFixed(2)}`);
+          console.log(`    Description: ${line.description}`);
+        });
+        console.log('========================================\n');
+        
         // Update account_ledger for Purchase Tax Control Account (debit, increases tax control)
         if (totalTaxAmount > 0) {
           const [lastVatLedger] = await connection.query(

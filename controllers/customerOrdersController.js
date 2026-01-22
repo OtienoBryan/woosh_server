@@ -21,12 +21,17 @@ const db = require('../database/db');
  * - CREATE INDEX idx_clients_name ON Clients(name);
  */
 const getCustomerOrdersData = async (req, res) => {
+  console.log('=== CUSTOMER ORDERS DATA ENDPOINT HIT ===');
+  console.log('Request query params:', req.query);
+  
   try {
     const { page = 1, limit = 10, status, rider_id, start_date, end_date, search } = req.query;
     
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
     const offset = (pageNum - 1) * limitNum;
+    
+    console.log(`Fetching customer orders: page=${pageNum}, limit=${limitNum}, status=${status}`);
     
     // Build WHERE clause based on filters
     let whereConditions = [];
@@ -159,7 +164,7 @@ const getCustomerOrdersData = async (req, res) => {
         c.contact as customer_contact,
         c.balance as customer_balance,
         sr.name as salesrep,
-        u.full_name as created_by_name,
+        u.username as created_by_name,
         u.email as salesrep_email,
         r.name as rider_name,
         r.contact as rider_contact
@@ -284,13 +289,24 @@ const getCustomerOrdersData = async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Error fetching customer orders data:', error);
+    console.error('==============================================');
+    console.error('❌ ERROR IN CUSTOMER ORDERS CONTROLLER');
+    console.error('==============================================');
+    console.error('Error message:', error.message);
+    console.error('Error name:', error.name);
+    console.error('Error code:', error.code);
     console.error('Error stack:', error.stack);
     console.error('Request query params:', req.query);
+    console.error('Request URL:', req.url);
+    console.error('Full error object:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+    console.error('==============================================');
+    
     res.status(500).json({
       success: false,
       error: 'Failed to fetch customer orders data',
       details: error.message,
+      errorName: error.name,
+      errorCode: error.code,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }

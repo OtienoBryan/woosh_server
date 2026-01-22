@@ -5,17 +5,23 @@ const jwt = require('jsonwebtoken');
  * Verifies JWT token from Authorization header and attaches user info to request
  */
 const authenticateToken = (req, res, next) => {
+  console.log('=== AUTH MIDDLEWARE HIT ===', req.url);
+  
   try {
     const authHeader = req.headers['authorization'];
+    console.log('Auth header:', authHeader ? 'Present' : 'Missing');
     const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
 
     if (!token) {
+      console.log('No token provided');
       return res.status(401).json({ 
         success: false, 
         error: 'Access token required',
         message: 'Unathorized Access. Please login to continue.'
       });
     }
+    
+    console.log('Token found, verifying...');
 
     // Verify token
     jwt.verify(token, process.env.JWT_SECRET, (err, user) => {

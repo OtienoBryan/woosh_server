@@ -46,27 +46,56 @@ const creditNoteController = {
   // Get all credit notes
   getAllCreditNotes: async (req, res) => {
     try {
-      const [rows] = await db.query(`
-        SELECT 
-          cn.*,
-          c.name as customer_name,
-          c.email,
-          c.contact,
-          c.address,
-          s.name as staff_name,
-          creator.name as creator_name,
-          store.store_name as damage_store_name
-        FROM credit_notes cn
-        LEFT JOIN Clients c ON cn.client_id = c.id
-        LEFT JOIN staff s ON cn.received_by = s.id
-        LEFT JOIN staff creator ON cn.created_by = creator.id
-        LEFT JOIN stores store ON cn.damage_store_id = store.id
-        ORDER BY cn.created_at DESC
-      `);
+      // Try customer_id first (as per schema), fallback to client_id if it fails
+      let rows;
+      try {
+        [rows] = await db.query(`
+          SELECT 
+            cn.*,
+            c.name as customer_name,
+            c.email,
+            c.contact,
+            c.address,
+            s.name as staff_name,
+            creator.name as creator_name,
+            store.store_name as damage_store_name
+          FROM credit_notes cn
+          LEFT JOIN Clients c ON cn.customer_id = c.id
+          LEFT JOIN staff s ON cn.received_by = s.id
+          LEFT JOIN staff creator ON cn.created_by = creator.id
+          LEFT JOIN stores store ON cn.damage_store_id = store.id
+          ORDER BY cn.created_at DESC
+        `);
+      } catch (customerIdError) {
+        // If customer_id doesn't exist, try client_id
+        console.log('customer_id column not found, trying client_id:', customerIdError.message);
+        [rows] = await db.query(`
+          SELECT 
+            cn.*,
+            c.name as customer_name,
+            c.email,
+            c.contact,
+            c.address,
+            s.name as staff_name,
+            creator.name as creator_name,
+            store.store_name as damage_store_name
+          FROM credit_notes cn
+          LEFT JOIN Clients c ON cn.client_id = c.id
+          LEFT JOIN staff s ON cn.received_by = s.id
+          LEFT JOIN staff creator ON cn.created_by = creator.id
+          LEFT JOIN stores store ON cn.damage_store_id = store.id
+          ORDER BY cn.created_at DESC
+        `);
+      }
       res.json({ success: true, data: rows });
     } catch (error) {
       console.error('Error fetching credit notes:', error);
-      res.status(500).json({ success: false, error: 'Failed to fetch credit notes' });
+      console.error('Error stack:', error.stack);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to fetch credit notes',
+        details: error.message 
+      });
     }
   },
 
@@ -74,23 +103,62 @@ const creditNoteController = {
   getCreditNoteById: async (req, res) => {
     try {
       const { id } = req.params;
-      const [rows] = await db.query(`
-        SELECT 
-          cn.*,
-          c.name as customer_name,
-          c.email,
-          c.contact,
-          c.address,
-          s.name as staff_name,
-          creator.name as creator_name,
-          store.store_name as damage_store_name
-        FROM credit_notes cn
-        LEFT JOIN Clients c ON cn.client_id = c.id
-        LEFT JOIN staff s ON cn.received_by = s.id
-        LEFT JOIN staff creator ON cn.created_by = creator.id
-        LEFT JOIN stores store ON cn.damage_store_id = store.id
-        WHERE cn.id = ?
-      `, [id]);
+      
+      // Check which column name exists (customer_id or client_id)
+      let customerColumn = 'customer_id';
+      try {
+        const [columns] = await db.query(`
+          SELECT COLUMN_NAME 
+          FROM INFORMATION_SCHEMA.COLUMNS 
+          WHERE TABLE_NAME = 'credit_notes' 
+          AND COLUMN_NAME IN ('customer_id', 'client_id')
+          AND TABLE_SCHEMA = DATABASE()
+        `);
+        if (columns.length > 0) {
+          customerColumn = columns[0].COLUMN_NAME;
+        }
+      } catch (colError) {
+        console.log('Could not check column name, defaulting to customer_id');
+      }
+
+      let rows;
+      try {
+        [rows] = await db.query(`
+          SELECT 
+            cn.*,
+            c.name as customer_name,
+            c.email,
+            c.contact,
+            c.address,
+            s.name as staff_name,
+            creator.name as creator_name,
+            store.store_name as damage_store_name
+          FROM credit_notes cn
+          LEFT JOIN Clients c ON cn.customer_id = c.id
+          LEFT JOIN staff s ON cn.received_by = s.id
+          LEFT JOIN staff creator ON cn.created_by = creator.id
+          LEFT JOIN stores store ON cn.damage_store_id = store.id
+          WHERE cn.id = ?
+        `, [id]);
+      } catch (customerIdError) {
+        [rows] = await db.query(`
+          SELECT 
+            cn.*,
+            c.name as customer_name,
+            c.email,
+            c.contact,
+            c.address,
+            s.name as staff_name,
+            creator.name as creator_name,
+            store.store_name as damage_store_name
+          FROM credit_notes cn
+          LEFT JOIN Clients c ON cn.client_id = c.id
+          LEFT JOIN staff s ON cn.received_by = s.id
+          LEFT JOIN staff creator ON cn.created_by = creator.id
+          LEFT JOIN stores store ON cn.damage_store_id = store.id
+          WHERE cn.id = ?
+        `, [id]);
+      }
       
       if (rows.length === 0) {
         return res.status(404).json({ success: false, error: 'Credit note not found' });
@@ -153,6 +221,115 @@ const creditNoteController = {
     }
   },
 
+  // Get invoice items with credited quantities
+  getInvoiceItemsWithCreditedQuantities: async (req, res) => {
+    try {
+      const { invoiceId } = req.params;
+      
+      if (!invoiceId) {
+        return res.status(400).json({ success: false, error: 'Invoice ID is required' });
+      }
+
+      // Get invoice items with their original quantities
+      const [invoiceItems] = await db.query(`
+        SELECT 
+          soi.id,
+          soi.product_id,
+          soi.quantity as original_quantity,
+          soi.unit_price,
+          soi.total_price,
+          p.product_name,
+          p.product_code
+        FROM sales_order_items soi
+        LEFT JOIN products p ON soi.product_id = p.id
+        WHERE soi.sales_order_id = ?
+      `, [invoiceId]);
+
+      if (!invoiceItems || invoiceItems.length === 0) {
+        return res.json({ success: true, data: [] });
+      }
+
+      // Get credited quantities for each product-invoice combination
+      // Handle cases where invoice_id column might not exist in credit_note_items
+      let creditedItems = [];
+      try {
+        // First, check if invoice_id column exists in credit_note_items
+        const [columns] = await db.query(`
+          SELECT COLUMN_NAME 
+          FROM INFORMATION_SCHEMA.COLUMNS 
+          WHERE TABLE_NAME = 'credit_note_items' 
+          AND COLUMN_NAME = 'invoice_id'
+          AND TABLE_SCHEMA = DATABASE()
+        `);
+        
+        if (columns.length > 0) {
+          // invoice_id column exists, use it
+          [creditedItems] = await db.query(`
+            SELECT 
+              cni.invoice_id,
+              cni.product_id,
+              SUM(cni.quantity) as credited_quantity
+            FROM credit_note_items cni
+            JOIN credit_notes cn ON cni.credit_note_id = cn.id
+            WHERE cni.invoice_id = ? 
+              AND (cn.status IS NULL OR cn.status != 'cancelled')
+            GROUP BY cni.invoice_id, cni.product_id
+          `, [invoiceId]);
+        } else {
+          // invoice_id column doesn't exist, use original_invoice_id from credit_notes
+          [creditedItems] = await db.query(`
+            SELECT 
+              cn.original_invoice_id as invoice_id,
+              cni.product_id,
+              SUM(cni.quantity) as credited_quantity
+            FROM credit_note_items cni
+            JOIN credit_notes cn ON cni.credit_note_id = cn.id
+            WHERE cn.original_invoice_id = ? 
+              AND (cn.status IS NULL OR cn.status != 'cancelled')
+            GROUP BY cn.original_invoice_id, cni.product_id
+          `, [invoiceId]);
+        }
+      } catch (queryError) {
+        console.error('Error fetching credited items:', queryError);
+        console.error('Error details:', queryError.message);
+        // Continue with empty credited items - this is not fatal
+        creditedItems = [];
+      }
+
+      // Create a map of credited quantities by product_id
+      const creditedMap = {};
+      if (creditedItems && Array.isArray(creditedItems)) {
+        creditedItems.forEach(item => {
+          creditedMap[item.product_id] = parseFloat(item.credited_quantity) || 0;
+        });
+      }
+
+      // Combine invoice items with credited quantities
+      const itemsWithCredited = invoiceItems.map(item => {
+        const creditedQty = creditedMap[item.product_id] || 0;
+        const originalQty = parseFloat(item.original_quantity) || 0;
+        const remainingQty = originalQty - creditedQty;
+        
+        return {
+          ...item,
+          original_quantity: originalQty,
+          credited_quantity: creditedQty,
+          remaining_quantity: remainingQty > 0 ? remainingQty : 0
+        };
+      });
+
+      res.json({ success: true, data: itemsWithCredited });
+    } catch (error) {
+      console.error('Error fetching invoice items with credited quantities:', error);
+      console.error('Error stack:', error.stack);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to fetch invoice items',
+        details: error.message 
+      });
+    }
+  },
+
   // Create a new credit note
   createCreditNote: async (req, res) => {
     let connection;
@@ -204,36 +381,71 @@ const creditNoteController = {
         total_amount += itemTotal;
       }
 
-      // Insert credit note
-      const [creditNoteResult] = await connection.query(
-        `INSERT INTO credit_notes (
-          credit_note_number, 
-          client_id, 
-          credit_note_date, 
-          original_invoice_id,
-          reason, 
-          scenario_type,
-          damage_store_id,
-          subtotal, 
-          tax_amount, 
-          total_amount, 
-          status,
-          created_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
-        [
-          creditNoteNumber,
-          customer_id,
-          credit_note_date,
-          primaryInvoiceId,
-          reason || '',
-          scenario_type,
-          damage_store_id,
-          subtotal,
-          tax_amount,
-          total_amount,
-          1 // created_by
-        ]
-      );
+      // Insert credit note - try customer_id first, fallback to client_id
+      let creditNoteResult;
+      try {
+        [creditNoteResult] = await connection.query(
+          `INSERT INTO credit_notes (
+            credit_note_number, 
+            customer_id, 
+            credit_note_date, 
+            original_invoice_id,
+            reason, 
+            scenario_type,
+            damage_store_id,
+            subtotal, 
+            tax_amount, 
+            total_amount, 
+            status,
+            created_by
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
+          [
+            creditNoteNumber,
+            customer_id,
+            credit_note_date,
+            primaryInvoiceId,
+            reason || '',
+            scenario_type,
+            damage_store_id,
+            subtotal,
+            tax_amount,
+            total_amount,
+            1 // created_by
+          ]
+        );
+      } catch (customerIdError) {
+        // If customer_id doesn't exist, use client_id
+        console.log('customer_id column not found, using client_id:', customerIdError.message);
+        [creditNoteResult] = await connection.query(
+          `INSERT INTO credit_notes (
+            credit_note_number, 
+            client_id, 
+            credit_note_date, 
+            original_invoice_id,
+            reason, 
+            scenario_type,
+            damage_store_id,
+            subtotal, 
+            tax_amount, 
+            total_amount, 
+            status,
+            created_by
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
+          [
+            creditNoteNumber,
+            customer_id,
+            credit_note_date,
+            primaryInvoiceId,
+            reason || '',
+            scenario_type,
+            damage_store_id,
+            subtotal,
+            tax_amount,
+            total_amount,
+            1 // created_by
+          ]
+        );
+      }
       const creditNoteId = creditNoteResult.insertId;
 
              // Insert credit note items
@@ -251,8 +463,10 @@ const creditNoteController = {
              unit_price, 
              total_price, 
              net_price, 
-             tax_amount
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+             tax_amount,
+             \`condition\`,
+             return_store_id
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
            [
              creditNoteId,
              item.invoice_id || primaryInvoiceId,
@@ -261,7 +475,9 @@ const creditNoteController = {
              item.unit_price,
              itemTotal,
              itemNet,
-             itemTax
+             itemTax,
+             item.condition || null,
+             item.return_store_id || null
            ]
          );
        }
@@ -322,29 +538,17 @@ const creditNoteController = {
 
       if (scenario_type === 'faulty_no_stock') {
         // Scenario 1: Faulty products (no stock return)
-        // Dr. Damages/faulty account (P&L), Dr. Sales VAT, Cr. Debtors account
+        // Dr. Sales Returns account (P&L), Dr. Sales VAT, Cr. Debtors account
         
-        // Find or create damages/faulty account (P&L expense account)
+        // Find Sales Returns account (account code 510055)
         let [damagesAccount] = await connection.query(
           `SELECT id FROM chart_of_accounts 
-           WHERE (account_name LIKE '%damage%' OR account_name LIKE '%faulty%' OR account_name LIKE '%defect%')
-           AND account_type IN (5, 16, 18) 
+           WHERE account_code = '510055' 
            LIMIT 1`
         );
         
-        // If not found, try to find any expense account with account_type 16 or 18
         if (!damagesAccount.length) {
-          [damagesAccount] = await connection.query(
-            `SELECT id FROM chart_of_accounts 
-             WHERE account_type IN (16, 18) 
-             AND is_active = 1 
-             ORDER BY account_code 
-             LIMIT 1`
-          );
-        }
-        
-        if (!damagesAccount.length) {
-          throw new Error('Damages/Faulty account not found. Please create an expense account for damages.');
+          throw new Error('Sales Returns account (510055) not found. Please create the account.');
         }
 
         // Create journal entry
@@ -383,7 +587,7 @@ const creditNoteController = {
           [journalEntryId, accountsReceivableAccount[0].id, total_amount, `Credit note ${creditNoteNumber}`]
         );
 
-        // Debit Damages/Faulty account (P&L)
+        // Debit Sales Returns account (P&L)
         await connection.query(
           `INSERT INTO journal_entry_lines (
             journal_entry_id, 
@@ -392,7 +596,7 @@ const creditNoteController = {
             credit_amount, 
             description
           ) VALUES (?, ?, ?, 0, ?)`,
-          [journalEntryId, damagesAccount[0].id, subtotal, `Damages/Faulty products - ${creditNoteNumber}`]
+          [journalEntryId, damagesAccount[0].id, subtotal, `Sales Returns - ${creditNoteNumber}`]
         );
 
         // Debit Sales Tax Payable (if tax account exists)
@@ -411,29 +615,17 @@ const creditNoteController = {
 
       } else if (scenario_type === 'faulty_with_stock') {
         // Scenario 2: Expired/damaged/faulty products from stock
-        // Dr. Faulty account (P&L), Cr. Store (inventory), Cr. Cost of sale account
+        // Dr. Sales Returns account (P&L), Cr. Store (inventory), Cr. Cost of sale account
         
-        // Find or create damages/faulty account (P&L expense account)
+        // Find Sales Returns account (account code 510055)
         let [damagesAccount] = await connection.query(
           `SELECT id FROM chart_of_accounts 
-           WHERE (account_name LIKE '%damage%' OR account_name LIKE '%faulty%' OR account_name LIKE '%defect%')
-           AND account_type IN (5, 16, 18) 
+           WHERE account_code = '510055' 
            LIMIT 1`
         );
         
-        // If not found, try to find any expense account with account_type 16 or 18
         if (!damagesAccount.length) {
-          [damagesAccount] = await connection.query(
-            `SELECT id FROM chart_of_accounts 
-             WHERE account_type IN (16, 18) 
-             AND is_active = 1 
-             ORDER BY account_code 
-             LIMIT 1`
-          );
-        }
-        
-        if (!damagesAccount.length) {
-          throw new Error('Damages/Faulty account not found. Please create an expense account for damages.');
+          throw new Error('Sales Returns account (510055) not found. Please create the account.');
         }
 
         // Find inventory account (store inventory)
@@ -506,7 +698,7 @@ const creditNoteController = {
           [journalEntryId, accountsReceivableAccount[0].id, total_amount, `Credit note ${creditNoteNumber}`]
         );
 
-        // Debit Damages/Faulty account (P&L) - for the sales value
+        // Debit Sales Returns account (P&L) - for the sales value
         await connection.query(
           `INSERT INTO journal_entry_lines (
             journal_entry_id, 
@@ -515,7 +707,7 @@ const creditNoteController = {
             credit_amount, 
             description
           ) VALUES (?, ?, ?, 0, ?)`,
-          [journalEntryId, damagesAccount[0].id, subtotal, `Damages/Faulty products - ${creditNoteNumber}`]
+          [journalEntryId, damagesAccount[0].id, subtotal, `Sales Returns - ${creditNoteNumber}`]
         );
 
         // Debit Sales Tax Payable (if tax account exists)
@@ -556,8 +748,14 @@ const creditNoteController = {
           [journalEntryId, cogsAccount[0].id, totalCost, `COGS reversal - ${creditNoteNumber}`]
         );
 
-        // Update inventory for the damage store
+        // Update inventory for the damage store (legacy scenario 2 flow)
+        // Only process items that don't have their own return_store_id to avoid double updates
         for (const item of items) {
+          // Skip items that have their own return_store_id (new per-item flow)
+          if (item.return_store_id) {
+            continue;
+          }
+          
           const { product_id, quantity } = item;
           
           // Check if product exists in the damage store inventory
@@ -571,7 +769,7 @@ const creditNoteController = {
             // Create new inventory record
             finalQuantity = quantity;
             await connection.query(
-              'INSERT INTO store_inventory (store_id, product_id, quantity, created_at, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+              'INSERT INTO store_inventory (store_id, product_id, quantity, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
               [damage_store_id, product_id, quantity]
             );
           } else {
@@ -591,6 +789,51 @@ const creditNoteController = {
             quantity: quantity,
             referenceId: creditNoteId,
             notes: `Received from credit note ${creditNoteNumber} - Faulty products`,
+            db: connection,
+            newQuantity: finalQuantity
+          });
+        }
+      }
+
+      // Update inventory for items with return_store_id (per-item return stores)
+      // This handles the new flow where each item can have its own return store
+      // This runs for all items with return_store_id, regardless of scenario_type
+      for (const item of items) {
+        if (item.return_store_id) {
+          const { product_id, quantity, return_store_id, condition } = item;
+          
+          // Check if product exists in the return store inventory
+          const [existingInventory] = await connection.query(
+            'SELECT id, quantity FROM store_inventory WHERE store_id = ? AND product_id = ?',
+            [return_store_id, product_id]
+          );
+
+          let finalQuantity;
+          if (existingInventory.length === 0) {
+            // Create new inventory record
+            finalQuantity = quantity;
+            await connection.query(
+              'INSERT INTO store_inventory (store_id, product_id, quantity, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
+              [return_store_id, product_id, quantity]
+            );
+          } else {
+            // Update existing inventory
+            const oldQuantity = existingInventory[0].quantity;
+            finalQuantity = oldQuantity + quantity;
+            await connection.query(
+              'UPDATE store_inventory SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE store_id = ? AND product_id = ?',
+              [finalQuantity, return_store_id, product_id]
+            );
+          }
+
+          // Record inventory transaction
+          const conditionText = condition === 'good' ? 'Good condition' : condition === 'damaged' ? 'Damaged/Faulty' : 'Unknown';
+          await recordInventoryTransaction({
+            storeId: return_store_id,
+            productId: product_id,
+            quantity: quantity,
+            referenceId: creditNoteId,
+            notes: `Received from credit note ${creditNoteNumber} - ${conditionText}`,
             db: connection,
             newQuantity: finalQuantity
           });
@@ -636,19 +879,54 @@ const creditNoteController = {
   getCustomerCreditNotes: async (req, res) => {
     try {
       const { customerId } = req.params;
-      const [rows] = await db.query(`
-        SELECT 
-          cn.*,
-          so.so_number as original_invoice_number,
-          s.name as staff_name,
-          creator.name as creator_name
-        FROM credit_notes cn
-        LEFT JOIN sales_orders so ON cn.original_invoice_id = so.id
-        LEFT JOIN staff s ON cn.received_by = s.id
-        LEFT JOIN staff creator ON cn.created_by = creator.id
-        WHERE cn.client_id = ?
-        ORDER BY cn.created_at DESC
-      `, [customerId]);
+      
+      // Check which column name exists (customer_id or client_id)
+      let customerColumn = 'customer_id';
+      try {
+        const [columns] = await db.query(`
+          SELECT COLUMN_NAME 
+          FROM INFORMATION_SCHEMA.COLUMNS 
+          WHERE TABLE_NAME = 'credit_notes' 
+          AND COLUMN_NAME IN ('customer_id', 'client_id')
+          AND TABLE_SCHEMA = DATABASE()
+        `);
+        if (columns.length > 0) {
+          customerColumn = columns[0].COLUMN_NAME;
+        }
+      } catch (colError) {
+        console.log('Could not check column name, defaulting to customer_id');
+      }
+
+      let rows;
+      try {
+        [rows] = await db.query(`
+          SELECT 
+            cn.*,
+            so.so_number as original_invoice_number,
+            s.name as staff_name,
+            creator.name as creator_name
+          FROM credit_notes cn
+          LEFT JOIN sales_orders so ON cn.original_invoice_id = so.id
+          LEFT JOIN staff s ON cn.received_by = s.id
+          LEFT JOIN staff creator ON cn.created_by = creator.id
+          WHERE cn.customer_id = ?
+          ORDER BY cn.created_at DESC
+        `, [customerId]);
+      } catch (customerIdError) {
+        [rows] = await db.query(`
+          SELECT 
+            cn.*,
+            so.so_number as original_invoice_number,
+            s.name as staff_name,
+            creator.name as creator_name
+          FROM credit_notes cn
+          LEFT JOIN sales_orders so ON cn.original_invoice_id = so.id
+          LEFT JOIN staff s ON cn.received_by = s.id
+          LEFT JOIN staff creator ON cn.created_by = creator.id
+          WHERE cn.client_id = ?
+          ORDER BY cn.created_at DESC
+        `, [customerId]);
+      }
       
       res.json({ success: true, data: rows });
     } catch (error) {
@@ -728,7 +1006,7 @@ const creditNoteController = {
           finalQuantity = numericQuantity;
           console.log(`➕ Creating new inventory: ${finalQuantity} units`);
           await db.query(
-            'INSERT INTO store_inventory (store_id, product_id, quantity, created_at, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+            'INSERT INTO store_inventory (store_id, product_id, quantity, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
             [storeId, productId, numericQuantity]
           );
         } else {

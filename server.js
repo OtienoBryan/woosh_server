@@ -9,6 +9,8 @@ require('dotenv').config();
 
 // Import centralized authentication middleware
 const { authenticateToken, validateJWTSecret } = require('./middleware/auth');
+const auditTrailMiddleware = require('./middleware/auditTrailMiddleware');
+const AuditTrailService = require('./services/auditTrailService');
 
 // Validate JWT secret on startup
 validateJWTSecret();
@@ -18,7 +20,7 @@ process.env.TZ = 'UTC';
 process.env.NODE_TZ = 'UTC';
 
 // Try to require database and other modules, but don't crash if they fail
-let db, staffController, roleController, multer, upload, uploadController, teamController, clientController, branchController, serviceChargeController, journeyPlanController, payrollRoutes, financialRoutes, staffRoutes, chatRoutes, clientRoutes, salesRoutes, managerRoutes, noticeRoutes, salesRepLeaveRoutes, calendarTaskRoutes, userRoutes, loginHistoryRoutes, journeyPlanRoutes, riderRoutes, myVisibilityReportRoutes, feedbackReportRoutes, availabilityReportRoutes, leaveRequestRoutes, supplierRoutes, receiptRoutes, myAssetsRoutes, faultyProductsRoutes, storeRoutes, routesRoutes, upliftSaleRoutes, dashboardRoutes, customerOrdersRoutes, categoryRoutes, assetPurchaseOrderRoutes, departmentExpenseRoutes;
+let db, staffController, roleController, multer, upload, uploadController, teamController, clientController, branchController, serviceChargeController, journeyPlanController, payrollRoutes, financialRoutes, staffRoutes, chatRoutes, clientRoutes, salesRoutes, managerRoutes, noticeRoutes, salesRepLeaveRoutes, calendarTaskRoutes, userRoutes, loginHistoryRoutes, journeyPlanRoutes, riderRoutes, myVisibilityReportRoutes, feedbackReportRoutes, availabilityReportRoutes, leaveRequestRoutes, supplierRoutes, receiptRoutes, myAssetsRoutes, faultyProductsRoutes, storeRoutes, routesRoutes, upliftSaleRoutes, dashboardRoutes, customerOrdersRoutes, categoryRoutes, assetPurchaseOrderRoutes, departmentExpenseRoutes, auditTrailRoutes;
 
 try {
   db = require('./database/db');
@@ -67,6 +69,7 @@ try {
   categoryRoutes = require('./routes/categoryRoutes');
   assetPurchaseOrderRoutes = require('./routes/assetPurchaseOrderRoutes');
   departmentExpenseRoutes = require('./routes/departmentExpenseRoutes');
+  auditTrailRoutes = require('./routes/auditTrailRoutes');
 } catch (error) {
   console.log('Some modules failed to load:', error.message);
 }
@@ -138,6 +141,13 @@ app.get('/api/debug', authenticateToken, (req, res) => {
 
 // Middleware
 app.use(express.json());
+
+// Apply audit trail middleware to all API routes
+// This will log all authenticated API requests
+app.use('/api', auditTrailMiddleware({
+  excludePaths: ['/api/health', '/api/auth/login', '/api/auth/logout'],
+  excludeMethods: ['OPTIONS']
+}));
 
 // Only register routes if modules loaded successfully
 if (riderRoutes) {
@@ -213,6 +223,8 @@ app.post('/api/auth/login', async (req, res) => {
 
     if (staff.length === 0) {
       console.log('No staff found with name:', username);
+      // Log failed login attempt
+      await AuditTrailService.logLogin(req, null, false, 'User not found');
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
@@ -220,6 +232,8 @@ app.post('/api/auth/login', async (req, res) => {
 
     if (!user.password) {
       console.log('No password set for this staff member:', username);
+      // Log failed login attempt
+      await AuditTrailService.logLogin(req, user, false, 'No password set');
       return res.status(401).json({ message: 'No password set for this staff member' });
     }
 
@@ -230,6 +244,8 @@ app.post('/api/auth/login', async (req, res) => {
 
     if (!isValidPassword) {
       console.log('Invalid password for staff:', username);
+      // Log failed login attempt
+      await AuditTrailService.logLogin(req, user, false, 'Invalid password');
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
@@ -246,6 +262,10 @@ app.post('/api/auth/login', async (req, res) => {
     );
 
     console.log('Login successful for staff:', username);
+    
+    // Log successful login
+    await AuditTrailService.logLogin(req, user, true);
+    
     res.json({
       token,
       user: {
@@ -257,6 +277,8 @@ app.post('/api/auth/login', async (req, res) => {
     });
   } catch (error) {
     console.error('Login error:', error);
+    // Log failed login attempt
+    await AuditTrailService.logLogin(req, null, false, error.message);
     res.status(500).json({ message: 'Internal server error' });
   }
 });
@@ -558,6 +580,9 @@ app.use('/api/calendar-tasks', calendarTaskRoutes);
 app.use('/api/tasks', require('./routes/tasksRoutes'));
 app.use('/api/users', userRoutes);
 app.use('/api/uplift-sales', upliftSaleRoutes);
+if (auditTrailRoutes) {
+  app.use('/api/audit-trail', auditTrailRoutes);
+}
 
 // Visibility Reports route (protected)
 app.get('/api/visibility-reports', authenticateToken, async (req, res) => {

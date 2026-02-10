@@ -99,23 +99,22 @@ exports.getAllSalesReps = async (req, res) => {
 
 // Create a new sales rep
 exports.createSalesRep = async (req, res) => {
-  const { name, email, phoneNumber, country, region, route, photo } = req.body;
+  const { name, email, phoneNumber, country, region, route_name_update, photoUrl, status = 1 } = req.body;
   try {
     const [result] = await db.query(
-      'INSERT INTO SalesRep (name, email, phone, country, region, route_name_update, photoUrl) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [name, email, phoneNumber, country, region, route, photo]
+      'INSERT INTO SalesRep (name, email, phoneNumber, country, region, route_name_update, photoUrl, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [name, email, phoneNumber, country, region, route_name_update, photoUrl, status]
     );
-    res.status(201).json({ 
-      id: result.insertId, 
-      name, 
-      email, 
-      phoneNumber, 
-      country, 
-      region, 
-      route, 
-      photo 
-    });
+    
+    // Fetch the created sales rep from database
+    const [newRep] = await db.query(
+      'SELECT id, name, email, phoneNumber, country, region, route_name_update, photoUrl, status FROM SalesRep WHERE id = ?',
+      [result.insertId]
+    );
+    
+    res.status(201).json(newRep[0]);
   } catch (err) {
+    console.error('Error creating sales rep:', err);
     res.status(500).json({ error: 'Failed to create sales rep', details: err.message });
   }
 };

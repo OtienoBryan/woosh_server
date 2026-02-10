@@ -85,6 +85,9 @@ router.get('/master-sales/sales-reps', salesController.getMasterSalesSalesReps);
 // Get sales rep monthly performance data
 router.get('/sales-rep-monthly-performance', salesController.getSalesRepMonthlyPerformance);
 
+// Get invoices for a specific sales rep and month
+router.get('/sales-rep-month-invoices', salesController.getSalesRepMonthInvoices);
+
 // Get detailed sales data for a specific client and month
 router.get('/client-month-details', salesController.getClientMonthDetails);
 

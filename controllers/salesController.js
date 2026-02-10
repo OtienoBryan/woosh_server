@@ -1831,3 +1831,50 @@ exports.getSalesRepMonthlyPerformance = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch sales rep monthly performance', details: err.message });
   }
 };
+
+// Get invoices for a specific sales rep and month
+exports.getSalesRepMonthInvoices = async (req, res) => {
+  try {
+    const { salesRepId, month, year } = req.query;
+    
+    console.log('[getSalesRepMonthInvoices] Fetching invoices:', { salesRepId, month, year });
+    
+    if (!salesRepId || !month || !year) {
+      return res.status(400).json({ error: 'salesRepId, month, and year are required' });
+    }
+    
+    const query = `
+      SELECT 
+        so.id,
+        so.so_number,
+        so.order_date,
+        so.total_amount,
+        so.my_status as status,
+        c.name as client_name,
+        c.contact as client_phone,
+        c.email as client_email,
+        sr.name as sales_rep_name,
+        GROUP_CONCAT(DISTINCT p.product_name ORDER BY p.product_name SEPARATOR ', ') as products,
+        SUM(soi.quantity) as total_quantity
+      FROM sales_orders so
+      JOIN Clients c ON so.client_id = c.id
+      JOIN sales_order_items soi ON so.id = soi.sales_order_id
+      LEFT JOIN products p ON soi.product_id = p.id
+      LEFT JOIN SalesRep sr ON so.salesrep = sr.id OR so.salesrep = CAST(sr.id AS CHAR)
+      WHERE (sr.id = ? OR so.salesrep = ?)
+        AND MONTH(so.order_date) = ?
+        AND YEAR(so.order_date) = ?
+        AND so.my_status IN (1, 2, 3, 7)
+      GROUP BY so.id, so.so_number, so.order_date, so.total_amount, so.my_status, c.name, c.contact, c.email, sr.name
+      ORDER BY so.order_date DESC, so.id DESC
+    `;
+    
+    const [invoices] = await db.query(query, [salesRepId, salesRepId, month, year]);
+    
+    console.log('[getSalesRepMonthInvoices] Found', invoices.length, 'invoices');
+    res.json(invoices);
+  } catch (err) {
+    console.error('[getSalesRepMonthInvoices] Error:', err);
+    res.status(500).json({ error: 'Failed to fetch sales rep month invoices', details: err.message });
+  }
+};

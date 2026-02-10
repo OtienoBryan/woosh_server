@@ -1,10 +1,13 @@
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+const db = require('../database/db');
 
 /**
  * JWT Authentication Middleware
  * Verifies JWT token from Authorization header and attaches user info to request
+ * Checks token blacklist to prevent reuse of logged-out tokens
  */
-const authenticateToken = (req, res, next) => {
+const authenticateToken = async (req, res, next) => {
   console.log('=== AUTH MIDDLEWARE HIT ===', req.url);
   
   try {
@@ -21,7 +24,31 @@ const authenticateToken = (req, res, next) => {
       });
     }
     
-    console.log('Token found, verifying...');
+    console.log('Token found, checking blacklist...');
+
+    // Check if token is blacklisted
+    try {
+      const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+      const [blacklistCheck] = await db.query(
+        'SELECT id FROM token_blacklist WHERE token_hash = ? AND expires_at > NOW()',
+        [tokenHash]
+      );
+
+      if (blacklistCheck.length > 0) {
+        console.log('Token is blacklisted - user has logged out');
+        return res.status(401).json({ 
+          success: false, 
+          error: 'Token invalidated',
+          message: 'This token has been invalidated. Please login again.'
+        });
+      }
+    } catch (blacklistError) {
+      // If blacklist check fails, log but continue with token verification
+      // This ensures the system still works if the blacklist table doesn't exist yet
+      console.warn('Blacklist check failed (table may not exist):', blacklistError.message);
+    }
+    
+    console.log('Token not blacklisted, verifying...');
 
     // Verify token
     jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
@@ -73,8 +100,9 @@ const authenticateToken = (req, res, next) => {
 /**
  * Optional Authentication Middleware
  * Attaches user info if token is valid, but doesn't block request if token is missing
+ * Also checks token blacklist
  */
-const optionalAuth = (req, res, next) => {
+const optionalAuth = async (req, res, next) => {
   try {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -82,6 +110,23 @@ const optionalAuth = (req, res, next) => {
     if (!token) {
       req.user = null;
       return next();
+    }
+
+    // Check if token is blacklisted
+    try {
+      const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+      const [blacklistCheck] = await db.query(
+        'SELECT id FROM token_blacklist WHERE token_hash = ? AND expires_at > NOW()',
+        [tokenHash]
+      );
+
+      if (blacklistCheck.length > 0) {
+        req.user = null;
+        return next();
+      }
+    } catch (blacklistError) {
+      // If blacklist check fails, continue with token verification
+      console.warn('Blacklist check failed in optionalAuth:', blacklistError.message);
     }
 
     jwt.verify(token, process.env.JWT_SECRET, (err, user) => {

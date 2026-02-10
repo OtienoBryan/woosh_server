@@ -1,6 +1,7 @@
 const db = require('../database/db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const AuditTrailService = require('../services/auditTrailService');
 
 const login = async (req, res) => {
@@ -72,6 +73,36 @@ const logout = async (req, res) => {
   try {
     // Get user from token if available
     const user = req.user || null;
+    
+    // Get token from Authorization header
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+    
+    if (token) {
+      try {
+        // Decode token to get expiration time
+        const decoded = jwt.decode(token);
+        
+        if (decoded && decoded.exp) {
+          // Create hash of token for blacklist (don't store full token)
+          const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+          
+          // Calculate expiration timestamp
+          const expiresAt = new Date(decoded.exp * 1000);
+          
+          // Add token to blacklist
+          await db.query(
+            'INSERT INTO token_blacklist (token_hash, user_id, expires_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE blacklisted_at = CURRENT_TIMESTAMP',
+            [tokenHash, user?.id || null, expiresAt]
+          );
+          
+          console.log('Token blacklisted for user:', user?.id || 'unknown');
+        }
+      } catch (blacklistError) {
+        // Log error but don't fail logout if blacklisting fails
+        console.error('Error blacklisting token:', blacklistError);
+      }
+    }
     
     // Log logout activity
     await AuditTrailService.logLogout(req, user);
